@@ -10,6 +10,10 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: studio
+    description: Creative studio workspace
+  - name: ai
+    description: AI-assisted writing and directing
 paths:
   /healthz:
     get:
@@ -24,7 +28,174 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /studio/bootstrap:
+    get:
+      operationId: getStudioBootstrap
+      tags: [studio]
+      summary: Load the studio workspace
+      responses:
+        "200":
+          description: Studio workspace
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StudioBootstrap"
+  /studio/project:
+    patch:
+      operationId: updateStudioProject
+      tags: [studio]
+      summary: Update the active project
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProjectUpdate"
+      responses:
+        "200":
+          description: Updated project
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Project"
+  /studio/characters:
+    post:
+      operationId: createStudioCharacter
+      tags: [studio]
+      summary: Create a character bible entry
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CharacterInput"
+      responses:
+        "201":
+          description: Created character
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Character"
+  /studio/characters/{id}:
+    patch:
+      operationId: updateStudioCharacter
+      tags: [studio]
+      summary: Update a character bible entry
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CharacterUpdate"
+      responses:
+        "200":
+          description: Updated character
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Character"
+  /studio/ai/draft:
+    post:
+      operationId: generateSceneDraft
+      tags: [ai]
+      summary: Generate a family-friendly scene draft
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AiScenePrompt"
+      responses:
+        "200":
+          description: Generated draft
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiTextResult"
+  /studio/ai/check:
+    post:
+      operationId: checkSceneContent
+      tags: [ai]
+      summary: Check scene content for young-audience fit
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AiContentCheckInput"
+      responses:
+        "200":
+          description: Content check result
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ContentCheckResult"
+  /studio/ai/director-notes:
+    post:
+      operationId: generateDirectorNotes
+      tags: [ai]
+      summary: Generate directing notes for a scene
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AiDirectorPrompt"
+      responses:
+        "200":
+          description: Director notes
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiTextResult"
+  /studio/ai/shot-suggestions:
+    post:
+      operationId: suggestShots
+      tags: [ai]
+      summary: Suggest shots for an emotional beat
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AiShotPrompt"
+      responses:
+        "200":
+          description: Shot suggestions
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ShotSuggestion"
+  /studio/generation/shots:
+    post:
+      operationId: generateShotClip
+      tags: [studio]
+      summary: Submit a shot to the configured video provider
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ShotGenerationInput"
+      responses:
+        "202":
+          description: Video generation job
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Clip"
 components:
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: integer
   schemas:
     HealthStatus:
       type: object
@@ -33,4 +204,186 @@ components:
           type: string
       required:
         - status
+    Project:
+      type: object
+      properties:
+        id: { type: integer }
+        title: { type: string }
+        logline: { type: string }
+        audience: { type: string }
+        seasonLabel: { type: string }
+        activeEpisodeId: { type: integer }
+      required: [id, title, logline, audience, seasonLabel, activeEpisodeId]
+    ProjectUpdate:
+      type: object
+      properties:
+        title: { type: string }
+        logline: { type: string }
+        audience: { type: string }
+        seasonLabel: { type: string }
+        activeEpisodeId: { type: integer }
+    Character:
+      type: object
+      properties:
+        id: { type: integer }
+        projectId: { type: integer }
+        name: { type: string }
+        role: { type: string }
+        personality: { type: string }
+        arc: { type: string }
+        faithLesson: { type: string }
+        visualNotes: { type: string }
+        referenceImageUrl: { type: ["string", "null"] }
+      required: [id, projectId, name, role, personality, arc, faithLesson, visualNotes, referenceImageUrl]
+    CharacterInput:
+      type: object
+      required: [name, role, personality, arc, faithLesson, visualNotes]
+      properties:
+        name: { type: string }
+        role: { type: string }
+        personality: { type: string }
+        arc: { type: string }
+        faithLesson: { type: string }
+        visualNotes: { type: string }
+        referenceImageUrl: { type: ["string", "null"] }
+    CharacterUpdate:
+      type: object
+      properties:
+        name: { type: string }
+        role: { type: string }
+        personality: { type: string }
+        arc: { type: string }
+        faithLesson: { type: string }
+        visualNotes: { type: string }
+        referenceImageUrl: { type: ["string", "null"] }
+    Episode:
+      type: object
+      properties:
+        id: { type: integer }
+        projectId: { type: integer }
+        number: { type: integer }
+        title: { type: string }
+        summary: { type: string }
+        status: { type: string, enum: [scripting, storyboarding, generating, done] }
+        progress: { type: integer }
+        duration: { type: string }
+      required: [id, projectId, number, title, summary, status, progress, duration]
+    Scene:
+      type: object
+      properties:
+        id: { type: integer }
+        episodeId: { type: integer }
+        number: { type: integer }
+        heading: { type: string }
+        synopsis: { type: string }
+        content: { type: string }
+        status: { type: string, enum: [draft, review, locked] }
+        duration: { type: string }
+      required: [id, episodeId, number, heading, synopsis, content, status, duration]
+    Shot:
+      type: object
+      properties:
+        id: { type: integer }
+        sceneId: { type: integer }
+        number: { type: integer }
+        description: { type: string }
+        shotType: { type: string }
+        movement: { type: string }
+        angle: { type: string }
+        beat: { type: string }
+        duration: { type: string }
+        referenceImageUrl: { type: ["string", "null"] }
+        status: { type: string, enum: [planned, queued, generating, ready] }
+      required: [id, sceneId, number, description, shotType, movement, angle, beat, duration, referenceImageUrl, status]
+    Clip:
+      type: object
+      properties:
+        id: { type: integer }
+        shotId: { type: integer }
+        provider: { type: string }
+        status: { type: string, enum: [queued, generating, ready, failed] }
+        url: { type: ["string", "null"] }
+        thumbnailUrl: { type: ["string", "null"] }
+        duration: { type: string }
+        createdAt: { type: string, format: date-time }
+      required: [id, shotId, provider, status, url, thumbnailUrl, duration, createdAt]
+    StudioBootstrap:
+      type: object
+      properties:
+        project: { $ref: "#/components/schemas/Project" }
+        episodes:
+          type: array
+          items: { $ref: "#/components/schemas/Episode" }
+        scenes:
+          type: array
+          items: { $ref: "#/components/schemas/Scene" }
+        characters:
+          type: array
+          items: { $ref: "#/components/schemas/Character" }
+        shots:
+          type: array
+          items: { $ref: "#/components/schemas/Shot" }
+        clips:
+          type: array
+          items: { $ref: "#/components/schemas/Clip" }
+      required: [project, episodes, scenes, characters, shots, clips]
+    AiScenePrompt:
+      type: object
+      required: [premise, characters, tone]
+      properties:
+        premise: { type: string }
+        characters: { type: string }
+        tone: { type: string }
+    AiContentCheckInput:
+      type: object
+      required: [content]
+      properties:
+        content: { type: string }
+    AiDirectorPrompt:
+      type: object
+      required: [scene, emotionalBeat]
+      properties:
+        scene: { type: string }
+        emotionalBeat: { type: string }
+    AiShotPrompt:
+      type: object
+      required: [scene, emotionalBeat]
+      properties:
+        scene: { type: string }
+        emotionalBeat: { type: string }
+    AiTextResult:
+      type: object
+      properties:
+        text: { type: string }
+        provider: { type: string }
+      required: [text, provider]
+    ContentCheckResult:
+      type: object
+      properties:
+        score: { type: integer }
+        label: { type: string }
+        flags:
+          type: array
+          items: { type: string }
+        suggestions:
+          type: array
+          items: { type: string }
+      required: [score, label, flags, suggestions]
+    ShotSuggestion:
+      type: object
+      properties:
+        shotType: { type: string }
+        movement: { type: string }
+        angle: { type: string }
+        rationale: { type: string }
+        duration: { type: string }
+      required: [shotType, movement, angle, rationale, duration]
+    ShotGenerationInput:
+      type: object
+      required: [shotId, prompt]
+      properties:
+        shotId: { type: integer }
+        prompt: { type: string }
+        referenceImageUrl: { type: ["string", "null"] }
+        provider: { type: ["string", "null"] }
 

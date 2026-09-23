@@ -1,6 +1,6 @@
-# [Project name]
+# Frame & Faith Creative Studio
 
-_Replace the heading above with the project's name, and this line with one sentence describing what this app does for users._
+Private creative workspace for writing, directing, storyboarding, and generating a Christian animated action series for ages 5–17.
 
 ## Run & Operate
 
@@ -22,23 +22,33 @@ _Replace the heading above with the project's name, and this line with one sente
 
 ## Where things live
 
-_Populate as you build — short repo map plus pointers to the source-of-truth file for DB schema, API contracts, theme files, etc._
+- `artifacts/creative-studio/src/App.tsx` — main studio workspace and workflow views
+- `artifacts/creative-studio/src/index.css` — evening storyboard room visual system
+- `artifacts/api-server/src/routes/studio.ts` — studio bootstrap, AI actions, and clip generation routes
+- `artifacts/api-server/src/lib/ai.ts` — direct Gemini client with transient retry handling
+- `artifacts/api-server/src/lib/video-provider.ts` — swappable mock / Runway / Luma / Pika adapter
+- `lib/api-spec/openapi.yaml` — source-of-truth API contract
+- `lib/db/src/schema/studio.ts` — Postgres schema and seed-backed studio entities
 
 ## Architecture decisions
 
-_Populate as you build — non-obvious choices a reader couldn't infer from the code (3-5 bullets)._
+- The first build uses a single active studio project with database-backed episodes, scenes, characters, shots, and clips.
+- Gemini text actions run server-side so the API key never reaches the browser.
+- Video generation is isolated behind `video-provider.ts`; `VIDEO_PROVIDER=mock` keeps local development usable until a provider is configured.
+- Reference image uploads currently use browser-session previews; persistent file storage is intentionally a follow-up to avoid storing base64 bytes in Postgres.
 
 ## Product
 
-_Describe the high-level user-facing capabilities of this app once they exist._
+The studio provides a dashboard, screenplay editor, AI co-writer, audience safety check, character bible, director notes, cinematography shot suggestions, storyboard upload/reordering, and a per-shot animation queue.
 
 ## User preferences
 
-_Populate as you build — explicit user instructions worth remembering across sessions._
+- Dark-mode-friendly personal tool; Christian, age-appropriate action tone; video provider must remain swappable.
 
 ## Gotchas
 
-_Populate as you build — sharp edges, "always run X before Y" rules._
+- Run `pnpm --filter @workspace/api-spec run codegen` after changing `lib/api-spec/openapi.yaml`.
+- Gemini direct API keys for new users may reject older model names; the client defaults to `GEMINI_MODEL` or `gemini-3.6-flash`.
 
 ## Pointers
 
