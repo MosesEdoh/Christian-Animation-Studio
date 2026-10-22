@@ -188,6 +188,102 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Character"
+  /studio/scenes:
+    post:
+      operationId: createStudioScene
+      tags: [studio]
+      summary: Add a scene to an episode
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SceneInput"
+      responses:
+        "201":
+          description: Created scene
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Scene"
+  /studio/scenes/{id}:
+    patch:
+      operationId: updateStudioScene
+      tags: [studio]
+      summary: Save a scene draft
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SceneUpdate"
+      responses:
+        "200":
+          description: Updated scene
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Scene"
+  /studio/shots:
+    post:
+      operationId: createStudioShot
+      tags: [studio]
+      summary: Add a shot to a storyboard
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ShotInput"
+      responses:
+        "201":
+          description: Added storyboard shot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Shot"
+  /studio/shots/{id}:
+    patch:
+      operationId: updateStudioShot
+      tags: [studio]
+      summary: Edit a storyboard shot
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ShotUpdate"
+      responses:
+        "200":
+          description: Updated storyboard shot
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Shot"
+  /studio/shots/reorder:
+    patch:
+      operationId: reorderStudioShots
+      tags: [studio]
+      summary: Save the storyboard order for a scene
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ShotOrderInput"
+      responses:
+        "200":
+          description: Reordered storyboard shots
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Shot"
   /studio/ai/draft:
     post:
       operationId: generateSceneDraft
@@ -262,6 +358,24 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/ShotSuggestion"
+  /studio/ai/faith-question:
+    post:
+      operationId: generateFaithQuestionStory
+      tags: [ai]
+      summary: Turn a difficult faith question into an age-aware story
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FaithQuestionInput"
+      responses:
+        "200":
+          description: Bible-grounded answer and story material
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FaithQuestionStory"
   /studio/generation/shots:
     post:
       operationId: generateShotClip
@@ -409,6 +523,20 @@ components:
         status: { type: string, enum: [draft, review, locked] }
         duration: { type: string }
       required: [id, episodeId, number, heading, synopsis, content, status, duration]
+    SceneInput:
+      type: object
+      properties:
+        episodeId: { type: integer }
+        heading: { type: string, minLength: 1 }
+        synopsis: { type: string }
+        content: { type: string }
+      required: [episodeId, heading, synopsis, content]
+    SceneUpdate:
+      type: object
+      properties:
+        heading: { type: string, minLength: 1 }
+        synopsis: { type: string }
+        content: { type: string }
     Shot:
       type: object
       properties:
@@ -424,6 +552,36 @@ components:
         referenceImageUrl: { type: ["string", "null"] }
         status: { type: string, enum: [planned, queued, generating, ready] }
       required: [id, sceneId, number, description, shotType, movement, angle, beat, duration, referenceImageUrl, status]
+    ShotInput:
+      type: object
+      properties:
+        sceneId: { type: integer }
+        description: { type: string, minLength: 1 }
+        shotType: { type: string }
+        movement: { type: string }
+        angle: { type: string }
+        beat: { type: string }
+        duration: { type: string }
+      required: [sceneId, description, shotType, movement, angle, beat, duration]
+    ShotUpdate:
+      type: object
+      properties:
+        description: { type: string, minLength: 1 }
+        shotType: { type: string }
+        movement: { type: string }
+        angle: { type: string }
+        beat: { type: string }
+        duration: { type: string }
+    ShotOrderInput:
+      type: object
+      properties:
+        sceneId: { type: integer }
+        shotIds:
+          type: array
+          minItems: 1
+          uniqueItems: true
+          items: { type: integer }
+      required: [sceneId, shotIds]
     Clip:
       type: object
       properties:
@@ -535,6 +693,23 @@ components:
         rationale: { type: string }
         duration: { type: string }
       required: [shotType, movement, angle, rationale, duration]
+    FaithQuestionInput:
+      type: object
+      properties:
+        question: { type: string, minLength: 5, maxLength: 1200 }
+        ageBand: { type: string, enum: ["5-8", "9-12", "13-17"] }
+      required: [question, ageBand]
+    FaithQuestionStory:
+      type: object
+      properties:
+        answer: { type: string }
+        storyPremise: { type: string }
+        sceneDraft: { type: string }
+        scriptureReferences:
+          type: array
+          items: { type: string }
+        safetyNote: { type: string }
+      required: [answer, storyPremise, sceneDraft, scriptureReferences, safetyNote]
     ShotGenerationInput:
       type: object
       required: [shotId, prompt]

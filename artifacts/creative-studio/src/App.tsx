@@ -8,7 +8,9 @@ import {
   Camera,
   Check,
   CheckCircle2,
+  ChevronDown,
   ChevronRight,
+  ChevronUp,
   Clapperboard,
   Clock3,
   FileText,
@@ -34,16 +36,23 @@ import {
   getGetStudioBootstrapQueryKey,
   useCheckSceneContent,
   useCreateStudioCharacter,
+  useCreateStudioScene,
+  useCreateStudioShot,
   useGenerateDirectorNotes,
+  useGenerateFaithQuestionStory,
   useGenerateSceneDraft,
   useGenerateShotClip,
   useGetStudioBootstrap,
+  useReorderStudioShots,
   useSuggestShots,
   useUpdateStudioCharacter,
   useUpdateStudioProject,
+  useUpdateStudioScene,
+  useUpdateStudioShot,
   type Character,
   type Clip,
   type Episode,
+  type FaithQuestionStory,
   type Project,
   type Scene,
   type Shot,
@@ -238,6 +247,8 @@ function StudioWorkspace() {
   const [characterForm, setCharacterForm] = useState<CharacterForm>(emptyCharacter);
   const [selectedSceneId, setSelectedSceneId] = useState<number | null>(null);
   const [selectedShotId, setSelectedShotId] = useState<number | null>(null);
+  const [sceneHeading, setSceneHeading] = useState('');
+  const [sceneSynopsis, setSceneSynopsis] = useState('');
   const [sceneContent, setSceneContent] = useState('');
   const [draftTone, setDraftTone] = useState('Brave, warm, and lightly comic');
   const [directorBeat, setDirectorBeat] = useState('');
@@ -257,6 +268,9 @@ function StudioWorkspace() {
   const [authUser, setAuthUser] = useState<AuthUser | null>(null);
   const [authChecked, setAuthChecked] = useState(false);
   const [exportPending, setExportPending] = useState(false);
+  const [faithQuestion, setFaithQuestion] = useState('');
+  const [faithAgeBand, setFaithAgeBand] = useState<'5-8' | '9-12' | '13-17'>('9-12');
+  const [faithQuestionResult, setFaithQuestionResult] = useState<FaithQuestionStory | null>(null);
 
   const queryClient = useQueryClient();
   const bootstrapQuery = useGetStudioBootstrap({
@@ -265,7 +279,13 @@ function StudioWorkspace() {
   const updateProject = useUpdateStudioProject();
   const createCharacter = useCreateStudioCharacter();
   const updateCharacter = useUpdateStudioCharacter();
+  const createScene = useCreateStudioScene();
+  const updateScene = useUpdateStudioScene();
+  const createShot = useCreateStudioShot();
+  const updateShot = useUpdateStudioShot();
+  const reorderShots = useReorderStudioShots();
   const generateDraft = useGenerateSceneDraft();
+  const generateFaithStory = useGenerateFaithQuestionStory();
   const checkContent = useCheckSceneContent();
   const generateNotes = useGenerateDirectorNotes();
   const suggestShots = useSuggestShots();
@@ -310,6 +330,12 @@ function StudioWorkspace() {
     () => episodeScenes.find((scene) => scene.id === selectedSceneId) ?? episodeScenes[0],
     [episodeScenes, selectedSceneId],
   );
+  const sceneHasUnsavedChanges = Boolean(
+    activeScene &&
+      (sceneHeading !== activeScene.heading ||
+        sceneSynopsis !== activeScene.synopsis ||
+        sceneContent !== activeScene.content),
+  );
   const sceneShots = useMemo(
     () => shots.filter((shot) => !activeScene || shot.sceneId === activeScene.id),
     [activeScene, shots],
@@ -337,6 +363,8 @@ function StudioWorkspace() {
   useEffect(() => {
     if (activeScene) {
       setSelectedSceneId(activeScene.id);
+      setSceneHeading(activeScene.heading);
+      setSceneSynopsis(activeScene.synopsis);
       setSceneContent(activeScene.content);
       setDirectorBeat(activeScene.synopsis);
       setShotBeat(activeScene.synopsis);
@@ -365,6 +393,189 @@ function StudioWorkspace() {
     queryClient.setQueryData<StudioBootstrap>(getGetStudioBootstrapQueryKey(), (current) =>
       current ? patch(current) : current,
     );
+  };
+
+  const persistActiveScene = (
+    afterSave?: () => void,
+    successMessage = 'Scene changes saved to the room.',
+  ) => {
+    if (!activeScene) return;
+    updateScene.mutate(
+      {
+        id: activeScene.id,
+        data: {
+          heading: sceneHeading,
+          synopsis: sceneSynopsis,
+          content: sceneContent,
+        },
+      },
+      {
+        onSuccess: (savedScene) => {
+          patchBootstrap((current) => ({
+            ...current,
+            scenes: current.scenes.map((scene) =>
+              scene.id === savedScene.id ? savedScene : scene,
+            ),
+          }));
+          afterSave?.();
+          if (successMessage) notify(successMessage);
+        },
+        onError: () => notify('The scene could not be saved. Your edits are still here.', 'error'),
+      },
+    );
+  };
+
+  const selectSceneSafely = (sceneId: number) => {
+    if (sceneId === activeScene?.id) return;
+    if (sceneHasUnsavedChanges) {
+      persistActiveScene(
+        () => setSelectedSceneId(sceneId),
+        'Scene changes saved before switching.',
+      );
+      return;
+    }
+    setSelectedSceneId(sceneId);
+  };
+
+  const navigateToView = (nextView: View) => {
+    if (nextView === view) return;
+    if (sceneHasUnsavedChanges) {
+      persistActiveScene(
+        () => setView(nextView),
+        'Script changes saved before leaving the editor.',
+      );
+      return;
+    }
+    setView(nextView);
+  };
+
+  const addScene = () => {
+    if (!activeEpisode) return;
+    const create = () => {
+      createScene.mutate(
+        {
+          data: {
+            episodeId: activeEpisode.id,
+            heading: 'INT. NEW SCENE - DAY',
+            synopsis: '',
+            content: '',
+          },
+        },
+        {
+          onSuccess: (scene) => {
+            patchBootstrap((current) => ({ ...current, scenes: [...current.scenes, scene] }));
+            setSelectedSceneId(scene.id);
+            setView('script');
+            notify('New scene added to the script.');
+          },
+          onError: () => notify('A new scene could not be added.', 'error'),
+        },
+      );
+    };
+    if (sceneHasUnsavedChanges) {
+      persistActiveScene(create, 'Current script saved before adding a scene.');
+    } else {
+      create();
+    }
+  };
+
+  const addShotToBoard = (suggestion: {
+    shotType: string;
+    movement: string;
+    angle: string;
+    rationale: string;
+    duration: string;
+  }) => {
+    if (!activeScene) return;
+    createShot.mutate(
+      {
+        data: {
+          sceneId: activeScene.id,
+          description: suggestion.rationale,
+          shotType: suggestion.shotType,
+          movement: suggestion.movement,
+          angle: suggestion.angle,
+          beat: shotBeat.trim() || activeScene.synopsis || 'Hold on the character’s choice.',
+          duration: suggestion.duration,
+        },
+      },
+      {
+        onSuccess: (shot) => {
+          patchBootstrap((current) => ({ ...current, shots: [...current.shots, shot] }));
+          notify('Shot added to the storyboard.');
+        },
+        onError: () => notify('This shot could not be added to the storyboard.', 'error'),
+      },
+    );
+  };
+
+  const saveShotOrder = (sceneId: number, shotIds: number[]) => {
+    reorderShots.mutate(
+      { data: { sceneId, shotIds } },
+      {
+        onSuccess: (savedShots) => {
+          patchBootstrap((current) => ({
+            ...current,
+            shots: [
+              ...current.shots.filter((shot) => shot.sceneId !== sceneId),
+              ...savedShots,
+            ],
+          }));
+          notify('Storyboard order saved.');
+        },
+        onError: () => {
+          void queryClient.invalidateQueries({ queryKey: getGetStudioBootstrapQueryKey() });
+          notify('The storyboard order could not be saved. The saved order was restored.', 'error');
+        },
+      },
+    );
+  };
+
+  const saveShot = async (
+    shotId: number,
+    data: Pick<Shot, 'description' | 'shotType' | 'movement' | 'angle' | 'beat' | 'duration'>,
+  ): Promise<boolean> => {
+    try {
+      const savedShot = await updateShot.mutateAsync({ id: shotId, data });
+      patchBootstrap((current) => ({
+        ...current,
+        shots: current.shots.map((shot) =>
+          shot.id === savedShot.id ? savedShot : shot,
+        ),
+      }));
+      notify('Storyboard card updated.');
+      return true;
+    } catch {
+      notify('The storyboard card could not be saved.', 'error');
+      return false;
+    }
+  };
+
+  const createFaithQuestionStory = () => {
+    const question = faithQuestion.trim();
+    if (question.length < 5) return;
+    generateFaithStory.mutate(
+      { data: { question, ageBand: faithAgeBand } },
+      {
+        onSuccess: (result) => {
+          setFaithQuestionResult(result);
+          notify('A Bible-grounded story pass is ready.');
+        },
+        onError: () => notify('The faith-question story could not be generated. Try again.', 'error'),
+      },
+    );
+  };
+
+  const useFaithQuestionScene = () => {
+    if (!faithQuestionResult) return;
+    const currentDraft = sceneContent.trimEnd();
+    setSceneContent(
+      currentDraft
+        ? `${currentDraft}\n\n${faithQuestionResult.sceneDraft}`
+        : faithQuestionResult.sceneDraft,
+    );
+    setView('script');
+    notify('Scene sketch added to the end of the script. Save it when ready.');
   };
 
   const uploadReferenceAsset = async (
@@ -587,9 +798,18 @@ function StudioWorkspace() {
             scenes={episodeScenes}
             activeScene={activeScene}
             selectedSceneId={selectedSceneId}
-            setSelectedSceneId={setSelectedSceneId}
+            setSelectedSceneId={selectSceneSafely}
+            onAddScene={addScene}
+            creatingScenePending={createScene.isPending}
+            sceneHeading={sceneHeading}
+            setSceneHeading={setSceneHeading}
+            sceneSynopsis={sceneSynopsis}
+            setSceneSynopsis={setSceneSynopsis}
             sceneContent={sceneContent}
             setSceneContent={setSceneContent}
+            sceneHasUnsavedChanges={sceneHasUnsavedChanges}
+            saveScene={() => persistActiveScene()}
+            saveScenePending={updateScene.isPending}
             draftTone={draftTone}
             setDraftTone={setDraftTone}
             runDraft={runDraft}
@@ -600,6 +820,14 @@ function StudioWorkspace() {
             characters={characters}
             openNewCharacter={openNewCharacter}
             openEditCharacter={openEditCharacter}
+            faithQuestion={faithQuestion}
+            setFaithQuestion={setFaithQuestion}
+            faithAgeBand={faithAgeBand}
+            setFaithAgeBand={setFaithAgeBand}
+            faithQuestionResult={faithQuestionResult}
+            createFaithQuestionStory={createFaithQuestionStory}
+            faithQuestionPending={generateFaithStory.isPending}
+            useFaithQuestionScene={useFaithQuestionScene}
           />
         );
       case 'directing':
@@ -608,7 +836,7 @@ function StudioWorkspace() {
             activeScene={activeScene}
             scenes={episodeScenes}
             selectedSceneId={selectedSceneId}
-            setSelectedSceneId={setSelectedSceneId}
+            setSelectedSceneId={selectSceneSafely}
             directorBeat={directorBeat}
             setDirectorBeat={setDirectorBeat}
             directorNotes={directorNotes}
@@ -622,7 +850,7 @@ function StudioWorkspace() {
             activeScene={activeScene}
             scenes={episodeScenes}
             selectedSceneId={selectedSceneId}
-            setSelectedSceneId={setSelectedSceneId}
+            setSelectedSceneId={selectSceneSafely}
             shots={sceneShots}
             shotSuggestions={shotSuggestions}
             shotBeat={shotBeat}
@@ -630,6 +858,13 @@ function StudioWorkspace() {
             runShotSuggestions={runShotSuggestions}
             pending={suggestShots.isPending}
             referenceAssets={assets.filter((asset) => asset.sceneId === activeScene?.id && asset.kind === 'storyboard')}
+            onAddShot={addShotToBoard}
+            creatingShotPending={createShot.isPending}
+            onReorderShots={(shotIds) => {
+              if (activeScene) saveShotOrder(activeScene.id, shotIds);
+            }}
+            onSaveShot={saveShot}
+            savingShotPending={updateShot.isPending}
             onUploadReference={(file) => uploadReferenceAsset(file, {
               kind: 'storyboard',
               episodeId: activeEpisode?.id ?? null,
@@ -672,12 +907,12 @@ function StudioWorkspace() {
   };
 
   if (bootstrapQuery.isLoading) {
-    return <WorkspaceFrame view={view} setView={setView} authUser={authUser} authChecked={authChecked}><LoadingWorkspace /></WorkspaceFrame>;
+    return <WorkspaceFrame view={view} setView={navigateToView} authUser={authUser} authChecked={authChecked}><LoadingWorkspace /></WorkspaceFrame>;
   }
 
   if (bootstrapQuery.isError || !bootstrap) {
     return (
-      <WorkspaceFrame view={view} setView={setView} authUser={authUser} authChecked={authChecked}>
+      <WorkspaceFrame view={view} setView={navigateToView} authUser={authUser} authChecked={authChecked}>
         <div className="content-wrap">
           <div className="error-panel" data-testid="panel-bootstrap-error">
             <h2>The room lights are still warming up.</h2>
@@ -697,7 +932,7 @@ function StudioWorkspace() {
   }
 
   return (
-    <WorkspaceFrame view={view} setView={setView} project={project} authUser={authUser} authChecked={authChecked}>
+    <WorkspaceFrame view={view} setView={navigateToView} project={project} authUser={authUser} authChecked={authChecked}>
       {renderView()}
       {showProjectEditor ? (
         <ProjectEditor
@@ -1012,8 +1247,17 @@ function ScriptStudio({
   activeScene,
   selectedSceneId,
   setSelectedSceneId,
+  onAddScene,
+  creatingScenePending,
+  sceneHeading,
+  setSceneHeading,
+  sceneSynopsis,
+  setSceneSynopsis,
   sceneContent,
   setSceneContent,
+  sceneHasUnsavedChanges,
+  saveScene,
+  saveScenePending,
   draftTone,
   setDraftTone,
   runDraft,
@@ -1024,14 +1268,31 @@ function ScriptStudio({
   characters,
   openNewCharacter,
   openEditCharacter,
+  faithQuestion,
+  setFaithQuestion,
+  faithAgeBand,
+  setFaithAgeBand,
+  faithQuestionResult,
+  createFaithQuestionStory,
+  faithQuestionPending,
+  useFaithQuestionScene,
 }: {
   activeEpisode?: Episode;
   scenes: Scene[];
   activeScene?: Scene;
   selectedSceneId: number | null;
   setSelectedSceneId: (id: number) => void;
+  onAddScene: () => void;
+  creatingScenePending: boolean;
+  sceneHeading: string;
+  setSceneHeading: (value: string) => void;
+  sceneSynopsis: string;
+  setSceneSynopsis: (value: string) => void;
   sceneContent: string;
   setSceneContent: (value: string) => void;
+  sceneHasUnsavedChanges: boolean;
+  saveScene: () => void;
+  saveScenePending: boolean;
   draftTone: string;
   setDraftTone: (value: string) => void;
   runDraft: () => void;
@@ -1042,12 +1303,23 @@ function ScriptStudio({
   characters: Character[];
   openNewCharacter: () => void;
   openEditCharacter: (character: Character) => void;
+  faithQuestion: string;
+  setFaithQuestion: (value: string) => void;
+  faithAgeBand: '5-8' | '9-12' | '13-17';
+  setFaithAgeBand: (value: '5-8' | '9-12' | '13-17') => void;
+  faithQuestionResult: FaithQuestionStory | null;
+  createFaithQuestionStory: () => void;
+  faithQuestionPending: boolean;
+  useFaithQuestionScene: () => void;
 }) {
   return (
     <div className="content-wrap" data-testid="view-script-studio">
       <div className="page-intro">
         <div><p className="eyebrow">01 / story department</p><h1 className="page-title">Put the <span className="display-script">heart</span> on the page.</h1><p className="page-subtitle">Write in plain language. Make the courage specific. Let the lesson arrive through the action.</p></div>
-        <span className="status-pill"><FileText size={13} /> {activeEpisode ? `Episode ${activeEpisode.number} · ${activeEpisode.title}` : 'No episode selected'}</span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap' }}>
+          <button type="button" className="btn btn-quiet" onClick={onAddScene} disabled={creatingScenePending || !activeEpisode} data-testid="button-add-scene"><Plus size={14} /> {creatingScenePending ? 'Adding…' : 'New scene'}</button>
+          <span className="status-pill"><FileText size={13} /> {activeEpisode ? `Episode ${activeEpisode.number} · ${activeEpisode.title}` : 'No episode selected'}</span>
+        </div>
       </div>
       <div className="studio-layout">
         <SceneList scenes={scenes} selectedSceneId={selectedSceneId} setSelectedSceneId={setSelectedSceneId} />
@@ -1055,11 +1327,16 @@ function ScriptStudio({
           {activeScene ? (
             <>
               <div className="editor-toolbar">
-                <div><p className="scene-heading">Scene {String(activeScene.number).padStart(2, '0')} / {activeScene.status}</p><h2 className="editor-heading">{activeScene.heading}</h2><p className="editor-caption">{activeScene.synopsis}</p></div>
+                <div><p className="scene-heading">Scene {String(activeScene.number).padStart(2, '0')} / {activeScene.status}</p><h2 className="editor-heading">{sceneHeading || 'Untitled scene'}</h2><p className="editor-caption">{sceneSynopsis || 'Add a one-line scene intention.'}</p></div>
                 <div className="editor-actions">
                   <button type="button" className="btn btn-sun" data-testid="button-generate-draft" onClick={runDraft} disabled={generateDraftPending}><WandSparkles size={14} /> {generateDraftPending ? 'Writing…' : 'Generate pass'}</button>
                   <button type="button" className="btn btn-quiet" data-testid="button-check-scene" onClick={runContentCheck} disabled={checkContentPending}><ShieldCheck size={14} /> {checkContentPending ? 'Checking…' : 'Audience check'}</button>
+                  <button type="button" className="btn btn-primary" data-testid="button-save-scene" onClick={saveScene} disabled={saveScenePending || !sceneHasUnsavedChanges}><Save size={14} /> {saveScenePending ? 'Saving…' : sceneHasUnsavedChanges ? 'Save script' : 'Saved'}</button>
                 </div>
+              </div>
+              <div className="form-grid" style={{ marginTop: 17 }}>
+                <div className="field full"><label htmlFor="scene-heading">Scene heading</label><input id="scene-heading" value={sceneHeading} onChange={(event) => setSceneHeading(event.target.value)} data-testid="input-scene-heading" maxLength={180} /></div>
+                <div className="field full"><label htmlFor="scene-synopsis">Scene intention</label><textarea id="scene-synopsis" value={sceneSynopsis} onChange={(event) => setSceneSynopsis(event.target.value)} data-testid="input-scene-synopsis" maxLength={1000} /></div>
               </div>
               <div className="script-paper">
                 <textarea value={sceneContent} onChange={(event) => setSceneContent(event.target.value)} data-testid="input-scene-content" aria-label="Scene content" />
@@ -1084,7 +1361,82 @@ function ScriptStudio({
           ) : <div className="empty-state"><FileText size={22} /><div><strong>Choose a scene to begin</strong><p>The script desk is ready for the next page.</p></div></div>}
         </section>
       </div>
+      <FaithQuestionWorkbench
+        question={faithQuestion}
+        setQuestion={setFaithQuestion}
+        ageBand={faithAgeBand}
+        setAgeBand={setFaithAgeBand}
+        result={faithQuestionResult}
+        onGenerate={createFaithQuestionStory}
+        pending={faithQuestionPending}
+        onUseScene={useFaithQuestionScene}
+      />
     </div>
+  );
+}
+
+function FaithQuestionWorkbench({
+  question,
+  setQuestion,
+  ageBand,
+  setAgeBand,
+  result,
+  onGenerate,
+  pending,
+  onUseScene,
+}: {
+  question: string;
+  setQuestion: (value: string) => void;
+  ageBand: '5-8' | '9-12' | '13-17';
+  setAgeBand: (value: '5-8' | '9-12' | '13-17') => void;
+  result: FaithQuestionStory | null;
+  onGenerate: () => void;
+  pending: boolean;
+  onUseScene: () => void;
+}) {
+  return (
+    <section className="panel pad" style={{ marginTop: 18 }} data-testid="panel-faith-question-workbench">
+      <div className="section-heading">
+        <div><p className="eyebrow">Writers’ room / questions worth asking</p><h2>Let a story make room for the hard question.</h2><p>Explore Bible-grounded answers with care, then let a character carry the question into a scene.</p></div>
+      </div>
+      <div className="insight-box" style={{ marginBottom: 18 }}>
+        <p>For story development, not counselling. The question is sent to Gemini to draft a response and is not saved in this project. Don’t include a child’s name or identifying details. If a child may be unsafe, involve a trusted safe adult rather than relying on a story or keeping it secret.</p>
+      </div>
+      <div className="form-grid">
+        <div className="field">
+          <label htmlFor="faith-question-age">Age range</label>
+          <select id="faith-question-age" value={ageBand} onChange={(event) => setAgeBand(event.target.value as '5-8' | '9-12' | '13-17')} data-testid="select-faith-question-age">
+            <option value="5-8">5–8</option>
+            <option value="9-12">9–12</option>
+            <option value="13-17">13–17</option>
+          </select>
+        </div>
+        <div className="field full">
+          <label htmlFor="faith-question">A question a character may be afraid to ask</label>
+          <textarea id="faith-question" value={question} onChange={(event) => setQuestion(event.target.value)} maxLength={1200} placeholder="For example: If God hears me, why do I still feel alone?" data-testid="input-faith-question" />
+          <span className="row-caption">Avoid names and details that could identify a real child.</span>
+        </div>
+      </div>
+      <button type="button" className="btn btn-sun" onClick={onGenerate} disabled={pending || question.trim().length < 5} data-testid="button-generate-faith-story">
+        <WandSparkles size={14} /> {pending ? 'Making room for the question…' : 'Explore as a story'}
+      </button>
+      {result ? (
+        <div className="faith-story-result" data-testid="panel-faith-story-result">
+          <div className="insight-box">
+            <h3>Gentle response</h3><p>{result.answer}</p>
+          </div>
+          <div className="form-grid" style={{ marginTop: 14 }}>
+            <div className="insight-box"><h3>Story premise</h3><p>{result.storyPremise}</p></div>
+            <div className="insight-box"><h3>Bible references</h3><p>{result.scriptureReferences.length ? result.scriptureReferences.join(' · ') : 'No references returned'}</p></div>
+          </div>
+          <div className="insight-box" style={{ marginTop: 14 }}>
+            <h3>Scene sketch</h3><p className="faith-scene-draft">{result.sceneDraft}</p>
+            <button type="button" className="btn btn-primary" style={{ marginTop: 12 }} onClick={onUseScene} data-testid="button-use-faith-scene"><FileText size={14} /> Append sketch to script</button>
+          </div>
+          <div className="insight-box" style={{ marginTop: 14 }}><h3>Care note</h3><p>{result.safetyNote}</p></div>
+        </div>
+      ) : null}
+    </section>
   );
 }
 
@@ -1153,6 +1505,11 @@ function CinematographyView({
   pending,
   referenceAssets,
   onUploadReference,
+  onAddShot,
+  creatingShotPending,
+  onReorderShots,
+  onSaveShot,
+  savingShotPending,
 }: {
   activeScene?: Scene;
   scenes: Scene[];
@@ -1166,15 +1523,27 @@ function CinematographyView({
   pending: boolean;
   referenceAssets: StudioAsset[];
   onUploadReference: (file: File) => Promise<string>;
+  onAddShot: (suggestion: { shotType: string; movement: string; angle: string; rationale: string; duration: string }) => void;
+  creatingShotPending: boolean;
+  onReorderShots: (shotIds: number[]) => void;
+  onSaveShot: (shotId: number, data: Pick<Shot, 'description' | 'shotType' | 'movement' | 'angle' | 'beat' | 'duration'>) => Promise<boolean>;
+  savingShotPending: boolean;
 }) {
   const [orderedShots, setOrderedShots] = useState(shots);
   const [draggedShotId, setDraggedShotId] = useState<number | null>(null);
+  const [editingShotId, setEditingShotId] = useState<number | null>(null);
+  const [shotEdit, setShotEdit] = useState<Pick<Shot, 'description' | 'shotType' | 'movement' | 'angle' | 'beat' | 'duration'> | null>(null);
   const [uploadingReference, setUploadingReference] = useState(false);
   const [referenceError, setReferenceError] = useState('');
 
   useEffect(() => {
     setOrderedShots(shots);
   }, [shots]);
+
+  const commitShotOrder = (next: Shot[]) => {
+    setOrderedShots(next);
+    onReorderShots(next.map((shot) => shot.id));
+  };
 
   const moveShot = (targetId: number) => {
     if (draggedShotId === null || draggedShotId === targetId) return;
@@ -1184,8 +1553,36 @@ function CinematographyView({
     const next = [...orderedShots];
     const [moved] = next.splice(fromIndex, 1);
     next.splice(toIndex, 0, moved);
-    setOrderedShots(next);
+    commitShotOrder(next);
     setDraggedShotId(null);
+  };
+
+  const moveShotByIndex = (fromIndex: number, toIndex: number) => {
+    if (toIndex < 0 || toIndex >= orderedShots.length) return;
+    const next = [...orderedShots];
+    const [moved] = next.splice(fromIndex, 1);
+    next.splice(toIndex, 0, moved);
+    commitShotOrder(next);
+  };
+
+  const beginShotEdit = (shot: Shot) => {
+    setEditingShotId(shot.id);
+    setShotEdit({
+      description: shot.description,
+      shotType: shot.shotType,
+      movement: shot.movement,
+      angle: shot.angle,
+      beat: shot.beat,
+      duration: shot.duration,
+    });
+  };
+
+  const saveShotEdit = async (shotId: number) => {
+    if (!shotEdit) return;
+    if (await onSaveShot(shotId, shotEdit)) {
+      setEditingShotId(null);
+      setShotEdit(null);
+    }
   };
 
   return (
@@ -1197,10 +1594,10 @@ function CinematographyView({
           <div className="field"><label htmlFor="shot-beat">Visual beat</label><input id="shot-beat" value={shotBeat} onChange={(event) => setShotBeat(event.target.value)} data-testid="input-shot-beat" placeholder="The instant hope becomes visible" /></div>
         </div>
         <div className="section-heading" style={{ marginTop: 22 }}><div><h2>{activeScene?.heading ?? 'Select a scene'}</h2><p>{activeScene?.synopsis ?? 'Shot suggestions are grounded in the selected scene.'}</p></div><button type="button" className="btn btn-sun" data-testid="button-suggest-shots" onClick={runShotSuggestions} disabled={pending || !activeScene}><WandSparkles size={14} /> {pending ? 'Sketching…' : 'Suggest shots'}</button></div>
-        {shotSuggestions.length ? <div className="suggestions-grid">{shotSuggestions.map((suggestion, index) => <div className="suggestion-card" key={`${suggestion.shotType}-${index}`} data-testid={`card-shot-suggestion-${index}`}><div className="shot-tags"><span className="shot-tag">{suggestion.shotType}</span><span className="shot-tag">{suggestion.duration}</span></div><h3>{suggestion.movement} · {suggestion.angle}</h3><p>{suggestion.rationale}</p></div>)}</div> : null}
+        {shotSuggestions.length ? <div className="suggestions-grid">{shotSuggestions.map((suggestion, index) => <div className="suggestion-card" key={`${suggestion.shotType}-${index}`} data-testid={`card-shot-suggestion-${index}`}><div className="shot-tags"><span className="shot-tag">{suggestion.shotType}</span><span className="shot-tag">{suggestion.duration}</span></div><h3>{suggestion.movement} · {suggestion.angle}</h3><p>{suggestion.rationale}</p><button type="button" className="btn btn-quiet" style={{ marginTop: 10 }} onClick={() => onAddShot(suggestion)} disabled={creatingShotPending || !activeScene} data-testid={`button-add-shot-${index}`}><Plus size={13} /> {creatingShotPending ? 'Adding…' : 'Add to storyboard'}</button></div>)}</div> : null}
       </section>
       <section className="panel pad" style={{ marginTop: 16 }} data-testid="panel-storyboard">
-        <div className="section-heading"><div><h2>Storyboard cards</h2><p>{shots.length ? `${shots.length} planned frames in this scene. Drag to reorder.` : 'The first frame is waiting for a beat.'}</p></div><Layers3 size={17} color="var(--coral)" /></div>
+        <div className="section-heading"><div><h2>Storyboard cards</h2><p>{shots.length ? `${shots.length} saved frames in this scene. Drag or use the order buttons to rearrange.` : 'The first frame is waiting for a beat.'}</p></div><Layers3 size={17} color="var(--coral)" /></div>
         <div className="field full" style={{ marginBottom: 18 }}>
           <label htmlFor="storyboard-upload">Reference board or sketch panel</label>
           <input id="storyboard-upload" type="file" accept="image/*" data-testid="input-storyboard-upload" onChange={(event) => {
@@ -1227,7 +1624,51 @@ function CinematographyView({
             ))}
           </div>
         ) : null}
-        {orderedShots.length ? <div className="shot-grid">{orderedShots.map((shot) => <div className="shot-card" key={shot.id} draggable onDragStart={() => setDraggedShotId(shot.id)} onDragOver={(event) => event.preventDefault()} onDrop={() => moveShot(shot.id)} data-testid={`card-shot-${shot.id}`}><span className="shot-index">SHOT {String(shot.number).padStart(2, '0')} · {shot.status}</span><h3>{shot.description}</h3><div className="shot-tags"><span className="shot-tag">{shot.shotType}</span><span className="shot-tag">{shot.movement}</span><span className="shot-tag">{shot.angle}</span></div><p className="row-caption" style={{ marginTop: 14 }}>{shot.beat} · {shot.duration}</p></div>)}</div> : <div className="empty-state"><Aperture size={22} /><div><strong>No frames on this scene yet</strong><p>Describe the emotional beat above and ask for a visual read.</p></div></div>}
+        {orderedShots.length ? (
+          <div className="shot-grid">
+            {orderedShots.map((shot, index) => (
+              <div
+                className="shot-card"
+                key={shot.id}
+                draggable={editingShotId !== shot.id}
+                onDragStart={() => setDraggedShotId(shot.id)}
+                onDragOver={(event) => event.preventDefault()}
+                onDrop={() => moveShot(shot.id)}
+                data-testid={`card-shot-${shot.id}`}
+              >
+                <div className="shot-card-toolbar">
+                  <span className="shot-index">SHOT {String(index + 1).padStart(2, '0')} · {shot.status}</span>
+                  <div className="shot-card-actions">
+                    <button type="button" className="icon-button" aria-label={`Move shot ${index + 1} up`} disabled={index === 0} onClick={() => moveShotByIndex(index, index - 1)}><ChevronUp size={14} /></button>
+                    <button type="button" className="icon-button" aria-label={`Move shot ${index + 1} down`} disabled={index === orderedShots.length - 1} onClick={() => moveShotByIndex(index, index + 1)}><ChevronDown size={14} /></button>
+                    {editingShotId === shot.id ? (
+                      <button type="button" className="btn btn-primary" onClick={() => void saveShotEdit(shot.id)} disabled={savingShotPending || !shotEdit?.description.trim()}><Save size={13} /> {savingShotPending ? 'Saving…' : 'Save'}</button>
+                    ) : (
+                      <button type="button" className="btn btn-quiet" onClick={() => beginShotEdit(shot)}><PenLine size={13} /> Edit</button>
+                    )}
+                  </div>
+                </div>
+                {editingShotId === shot.id && shotEdit ? (
+                  <div className="form-grid shot-edit-form">
+                    <div className="field full"><label htmlFor={`shot-description-${shot.id}`}>Frame description</label><textarea id={`shot-description-${shot.id}`} value={shotEdit.description} onChange={(event) => setShotEdit({ ...shotEdit, description: event.target.value })} /></div>
+                    <div className="field"><label htmlFor={`shot-type-${shot.id}`}>Shot type</label><input id={`shot-type-${shot.id}`} value={shotEdit.shotType} onChange={(event) => setShotEdit({ ...shotEdit, shotType: event.target.value })} /></div>
+                    <div className="field"><label htmlFor={`shot-movement-${shot.id}`}>Movement</label><input id={`shot-movement-${shot.id}`} value={shotEdit.movement} onChange={(event) => setShotEdit({ ...shotEdit, movement: event.target.value })} /></div>
+                    <div className="field"><label htmlFor={`shot-angle-${shot.id}`}>Angle</label><input id={`shot-angle-${shot.id}`} value={shotEdit.angle} onChange={(event) => setShotEdit({ ...shotEdit, angle: event.target.value })} /></div>
+                    <div className="field"><label htmlFor={`shot-duration-${shot.id}`}>Duration</label><input id={`shot-duration-${shot.id}`} value={shotEdit.duration} onChange={(event) => setShotEdit({ ...shotEdit, duration: event.target.value })} /></div>
+                    <div className="field full"><label htmlFor={`shot-beat-${shot.id}`}>Story beat</label><textarea id={`shot-beat-${shot.id}`} value={shotEdit.beat} onChange={(event) => setShotEdit({ ...shotEdit, beat: event.target.value })} /></div>
+                    <button type="button" className="btn btn-quiet" onClick={() => { setEditingShotId(null); setShotEdit(null); }}>Cancel</button>
+                  </div>
+                ) : (
+                  <>
+                    <h3>{shot.description}</h3>
+                    <div className="shot-tags"><span className="shot-tag">{shot.shotType}</span><span className="shot-tag">{shot.movement}</span><span className="shot-tag">{shot.angle}</span></div>
+                    <p className="row-caption" style={{ marginTop: 14 }}>{shot.beat} · {shot.duration}</p>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+        ) : <div className="empty-state"><Aperture size={22} /><div><strong>No frames on this scene yet</strong><p>Describe the emotional beat, generate shot ideas, and add the keepers to the board.</p></div></div>}
       </section>
     </div>
   );

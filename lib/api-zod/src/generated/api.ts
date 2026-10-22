@@ -278,6 +278,151 @@ export const UpdateStudioCharacterResponse = zod.object({
 
 
 /**
+ * @summary Add a scene to an episode
+ */
+
+
+
+export const CreateStudioSceneBody = zod.object({
+  "episodeId": zod.number().int(),
+  "heading": zod.string().min(1),
+  "synopsis": zod.string(),
+  "content": zod.string()
+})
+
+export const CreateStudioSceneResponse = zod.object({
+  "id": zod.number().int(),
+  "episodeId": zod.number().int(),
+  "number": zod.number().int(),
+  "heading": zod.string(),
+  "synopsis": zod.string(),
+  "content": zod.string(),
+  "status": zod.enum(['draft', 'review', 'locked']),
+  "duration": zod.string()
+})
+
+
+/**
+ * @summary Save a scene draft
+ */
+export const UpdateStudioSceneParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+
+
+
+export const UpdateStudioSceneBody = zod.object({
+  "heading": zod.string().min(1).optional(),
+  "synopsis": zod.string().optional(),
+  "content": zod.string().optional()
+})
+
+export const UpdateStudioSceneResponse = zod.object({
+  "id": zod.number().int(),
+  "episodeId": zod.number().int(),
+  "number": zod.number().int(),
+  "heading": zod.string(),
+  "synopsis": zod.string(),
+  "content": zod.string(),
+  "status": zod.enum(['draft', 'review', 'locked']),
+  "duration": zod.string()
+})
+
+
+/**
+ * @summary Add a shot to a storyboard
+ */
+
+
+
+export const CreateStudioShotBody = zod.object({
+  "sceneId": zod.number().int(),
+  "description": zod.string().min(1),
+  "shotType": zod.string(),
+  "movement": zod.string(),
+  "angle": zod.string(),
+  "beat": zod.string(),
+  "duration": zod.string()
+})
+
+export const CreateStudioShotResponse = zod.object({
+  "id": zod.number().int(),
+  "sceneId": zod.number().int(),
+  "number": zod.number().int(),
+  "description": zod.string(),
+  "shotType": zod.string(),
+  "movement": zod.string(),
+  "angle": zod.string(),
+  "beat": zod.string(),
+  "duration": zod.string(),
+  "referenceImageUrl": zod.string().nullable(),
+  "status": zod.enum(['planned', 'queued', 'generating', 'ready'])
+})
+
+
+/**
+ * @summary Edit a storyboard shot
+ */
+export const UpdateStudioShotParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+
+
+
+export const UpdateStudioShotBody = zod.object({
+  "description": zod.string().min(1).optional(),
+  "shotType": zod.string().optional(),
+  "movement": zod.string().optional(),
+  "angle": zod.string().optional(),
+  "beat": zod.string().optional(),
+  "duration": zod.string().optional()
+})
+
+export const UpdateStudioShotResponse = zod.object({
+  "id": zod.number().int(),
+  "sceneId": zod.number().int(),
+  "number": zod.number().int(),
+  "description": zod.string(),
+  "shotType": zod.string(),
+  "movement": zod.string(),
+  "angle": zod.string(),
+  "beat": zod.string(),
+  "duration": zod.string(),
+  "referenceImageUrl": zod.string().nullable(),
+  "status": zod.enum(['planned', 'queued', 'generating', 'ready'])
+})
+
+
+/**
+ * @summary Save the storyboard order for a scene
+ */
+
+
+
+export const ReorderStudioShotsBody = zod.object({
+  "sceneId": zod.number().int(),
+  "shotIds": zod.array(zod.number().int()).min(1)
+})
+
+export const ReorderStudioShotsResponseItem = zod.object({
+  "id": zod.number().int(),
+  "sceneId": zod.number().int(),
+  "number": zod.number().int(),
+  "description": zod.string(),
+  "shotType": zod.string(),
+  "movement": zod.string(),
+  "angle": zod.string(),
+  "beat": zod.string(),
+  "duration": zod.string(),
+  "referenceImageUrl": zod.string().nullable(),
+  "status": zod.enum(['planned', 'queued', 'generating', 'ready'])
+})
+export const ReorderStudioShotsResponse = zod.array(ReorderStudioShotsResponseItem)
+
+
+/**
  * @summary Generate a family-friendly scene draft
  */
 export const GenerateSceneDraftBody = zod.object({
@@ -337,6 +482,28 @@ export const SuggestShotsResponseItem = zod.object({
   "duration": zod.string()
 })
 export const SuggestShotsResponse = zod.array(SuggestShotsResponseItem)
+
+
+/**
+ * @summary Turn a difficult faith question into an age-aware story
+ */
+export const generateFaithQuestionStoryBodyQuestionMin = 5;
+export const generateFaithQuestionStoryBodyQuestionMax = 1200;
+
+
+
+export const GenerateFaithQuestionStoryBody = zod.object({
+  "question": zod.string().min(generateFaithQuestionStoryBodyQuestionMin).max(generateFaithQuestionStoryBodyQuestionMax),
+  "ageBand": zod.enum(['5-8', '9-12', '13-17'])
+})
+
+export const GenerateFaithQuestionStoryResponse = zod.object({
+  "answer": zod.string(),
+  "storyPremise": zod.string(),
+  "sceneDraft": zod.string(),
+  "scriptureReferences": zod.array(zod.string()),
+  "safetyNote": zod.string()
+})
 
 
 /**

@@ -137,6 +137,21 @@ export interface Scene {
   duration: string;
 }
 
+export interface SceneInput {
+  episodeId: number;
+  /** @minLength 1 */
+  heading: string;
+  synopsis: string;
+  content: string;
+}
+
+export interface SceneUpdate {
+  /** @minLength 1 */
+  heading?: string;
+  synopsis?: string;
+  content?: string;
+}
+
 export type ShotStatus = typeof ShotStatus[keyof typeof ShotStatus];
 
 
@@ -160,6 +175,33 @@ export interface Shot {
   /** @nullable */
   referenceImageUrl: string | null;
   status: ShotStatus;
+}
+
+export interface ShotInput {
+  sceneId: number;
+  /** @minLength 1 */
+  description: string;
+  shotType: string;
+  movement: string;
+  angle: string;
+  beat: string;
+  duration: string;
+}
+
+export interface ShotUpdate {
+  /** @minLength 1 */
+  description?: string;
+  shotType?: string;
+  movement?: string;
+  angle?: string;
+  beat?: string;
+  duration?: string;
+}
+
+export interface ShotOrderInput {
+  sceneId: number;
+  /** @minItems 1 */
+  shotIds: number[];
 }
 
 export type ClipStatus = typeof ClipStatus[keyof typeof ClipStatus];
@@ -281,6 +323,32 @@ export interface ShotSuggestion {
   angle: string;
   rationale: string;
   duration: string;
+}
+
+export type FaithQuestionInputAgeBand = typeof FaithQuestionInputAgeBand[keyof typeof FaithQuestionInputAgeBand];
+
+
+export const FaithQuestionInputAgeBand = {
+  '5-8': '5-8',
+  '9-12': '9-12',
+  '13-17': '13-17',
+} as const;
+
+export interface FaithQuestionInput {
+  /**
+     * @minLength 5
+     * @maxLength 1200
+     */
+  question: string;
+  ageBand: FaithQuestionInputAgeBand;
+}
+
+export interface FaithQuestionStory {
+  answer: string;
+  storyPremise: string;
+  sceneDraft: string;
+  scriptureReferences: string[];
+  safetyNote: string;
 }
 
 export interface ShotGenerationInput {

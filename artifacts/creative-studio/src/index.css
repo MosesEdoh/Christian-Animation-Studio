@@ -1419,6 +1419,33 @@ button:disabled {
   background: linear-gradient(145deg, #f8f2e6, #eee8dc);
 }
 
+.shot-card-toolbar,
+.shot-card-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 7px;
+}
+
+.shot-card-actions {
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.shot-edit-form {
+  position: relative;
+  z-index: 1;
+  margin-top: 12px;
+}
+
+.faith-story-result {
+  margin-top: 20px;
+}
+
+.faith-scene-draft {
+  white-space: pre-wrap;
+}
+
 .shot-card::after {
   position: absolute;
   right: 11px;

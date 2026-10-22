@@ -41,14 +41,16 @@ Private creative workspace for writing, directing, storyboarding, and generating
 - Reference images are uploaded directly to private App Storage using presigned URLs; Postgres stores object paths and metadata, not image bytes.
 - Reference uploads and private asset reads require an authenticated Replit session.
 - The series ZIP export includes scripts, shot lists, character data, reference images, and provider clips when they are browser-downloadable; otherwise it records provider URLs.
+- Scene headings, intentions, scripts, and storyboard-card edits/order are stored in Postgres; unsaved script edits save before changing scenes or leaving the editor.
+- Difficult faith questions are explored in a Bible-grounded, broadly Christian writers’ tool; the question is sent to Gemini for generation but is not saved to the studio database.
 
 ## Product
 
-The studio provides a dashboard, screenplay editor, AI co-writer, audience safety check, character bible, director notes, cinematography shot suggestions, persistent storyboard and character references, a per-shot animation queue, and an all-episodes ZIP export.
+The studio provides a dashboard, screenplay editor, AI co-writer, audience safety check, character bible, director notes, cinematography shot suggestions, persistent storyboard and character references, a per-shot animation queue, and an all-episodes ZIP export. Its Christian framing should be rooted in the Bible, welcoming of difficult questions children may feel unable to ask, age-aware, and clear that safety concerns need a trusted safe adult rather than secrecy.
 
 ## User preferences
 
-- Dark-mode-friendly personal tool; Christian, age-appropriate action tone; video provider must remain swappable.
+- Dark-mode-friendly personal tool; Bible-grounded Christian and age-appropriate action tone; video provider must remain swappable.
 
 ## Gotchas
 

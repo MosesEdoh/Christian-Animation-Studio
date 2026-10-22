@@ -33,12 +33,21 @@ import type {
   Clip,
   ContentCheckResult,
   ErrorEnvelope,
+  FaithQuestionInput,
+  FaithQuestionStory,
   HealthStatus,
   LogoutBrowserSessionParams,
   Project,
   ProjectUpdate,
+  Scene,
+  SceneInput,
+  SceneUpdate,
+  Shot,
   ShotGenerationInput,
+  ShotInput,
+  ShotOrderInput,
   ShotSuggestion,
+  ShotUpdate,
   StudioAsset,
   StudioAssetInput,
   StudioBootstrap,
@@ -991,6 +1000,448 @@ export const useUpdateStudioCharacter = <TError = ErrorType<unknown>,
       return useMutation(getUpdateStudioCharacterMutationOptions(options));
     }
 
+export const getCreateStudioSceneUrl = () => {
+
+
+
+
+  return `/api/studio/scenes`
+}
+
+/**
+ * @summary Add a scene to an episode
+ */
+export const createStudioScene = async (sceneInput: SceneInput, options?: Parameters<typeof customFetch>[1]): Promise<Scene> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<Scene>(getCreateStudioSceneUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(sceneInput)
+  }
+);}
+
+
+
+
+
+export const getCreateStudioSceneMutationKey = () => ['createStudioScene'] as const;
+
+export const getCreateStudioSceneMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createStudioScene>>, TError,CreateStudioSceneMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createStudioScene>>, TError,CreateStudioSceneMutationVariables, TContext> => {
+
+const mutationKey = getCreateStudioSceneMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createStudioScene>>, CreateStudioSceneMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  createStudioScene(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateStudioSceneMutationResult = NonNullable<Awaited<ReturnType<typeof createStudioScene>>>
+    export type CreateStudioSceneMutationBody = BodyType<SceneInput>
+    export type CreateStudioSceneMutationError = ErrorType<unknown>
+    export type CreateStudioSceneMutationVariables = {data: BodyType<SceneInput>}
+
+    /**
+ * @summary Add a scene to an episode
+ */
+export const useCreateStudioScene = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createStudioScene>>, TError,CreateStudioSceneMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createStudioScene>>,
+        TError,
+        CreateStudioSceneMutationVariables,
+        TContext
+      > => {
+      return useMutation(getCreateStudioSceneMutationOptions(options));
+    }
+
+export const getUpdateStudioSceneUrl = (id: number,) => {
+
+
+
+
+  return `/api/studio/scenes/${id}`
+}
+
+/**
+ * @summary Save a scene draft
+ */
+export const updateStudioScene = async (id: number,
+    sceneUpdate: SceneUpdate, options?: Parameters<typeof customFetch>[1]): Promise<Scene> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<Scene>(getUpdateStudioSceneUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(sceneUpdate)
+  }
+);}
+
+
+
+
+
+export const getUpdateStudioSceneMutationKey = () => ['updateStudioScene'] as const;
+
+export const getUpdateStudioSceneMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateStudioScene>>, TError,UpdateStudioSceneMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateStudioScene>>, TError,UpdateStudioSceneMutationVariables, TContext> => {
+
+const mutationKey = getUpdateStudioSceneMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateStudioScene>>, UpdateStudioSceneMutationVariables> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  updateStudioScene(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateStudioSceneMutationResult = NonNullable<Awaited<ReturnType<typeof updateStudioScene>>>
+    export type UpdateStudioSceneMutationBody = BodyType<SceneUpdate>
+    export type UpdateStudioSceneMutationError = ErrorType<unknown>
+    export type UpdateStudioSceneMutationVariables = {id: number;data: BodyType<SceneUpdate>}
+
+    /**
+ * @summary Save a scene draft
+ */
+export const useUpdateStudioScene = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateStudioScene>>, TError,UpdateStudioSceneMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateStudioScene>>,
+        TError,
+        UpdateStudioSceneMutationVariables,
+        TContext
+      > => {
+      return useMutation(getUpdateStudioSceneMutationOptions(options));
+    }
+
+export const getCreateStudioShotUrl = () => {
+
+
+
+
+  return `/api/studio/shots`
+}
+
+/**
+ * @summary Add a shot to a storyboard
+ */
+export const createStudioShot = async (shotInput: ShotInput, options?: Parameters<typeof customFetch>[1]): Promise<Shot> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<Shot>(getCreateStudioShotUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(shotInput)
+  }
+);}
+
+
+
+
+
+export const getCreateStudioShotMutationKey = () => ['createStudioShot'] as const;
+
+export const getCreateStudioShotMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createStudioShot>>, TError,CreateStudioShotMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createStudioShot>>, TError,CreateStudioShotMutationVariables, TContext> => {
+
+const mutationKey = getCreateStudioShotMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createStudioShot>>, CreateStudioShotMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  createStudioShot(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateStudioShotMutationResult = NonNullable<Awaited<ReturnType<typeof createStudioShot>>>
+    export type CreateStudioShotMutationBody = BodyType<ShotInput>
+    export type CreateStudioShotMutationError = ErrorType<unknown>
+    export type CreateStudioShotMutationVariables = {data: BodyType<ShotInput>}
+
+    /**
+ * @summary Add a shot to a storyboard
+ */
+export const useCreateStudioShot = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createStudioShot>>, TError,CreateStudioShotMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createStudioShot>>,
+        TError,
+        CreateStudioShotMutationVariables,
+        TContext
+      > => {
+      return useMutation(getCreateStudioShotMutationOptions(options));
+    }
+
+export const getUpdateStudioShotUrl = (id: number,) => {
+
+
+
+
+  return `/api/studio/shots/${id}`
+}
+
+/**
+ * @summary Edit a storyboard shot
+ */
+export const updateStudioShot = async (id: number,
+    shotUpdate: ShotUpdate, options?: Parameters<typeof customFetch>[1]): Promise<Shot> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<Shot>(getUpdateStudioShotUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(shotUpdate)
+  }
+);}
+
+
+
+
+
+export const getUpdateStudioShotMutationKey = () => ['updateStudioShot'] as const;
+
+export const getUpdateStudioShotMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateStudioShot>>, TError,UpdateStudioShotMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateStudioShot>>, TError,UpdateStudioShotMutationVariables, TContext> => {
+
+const mutationKey = getUpdateStudioShotMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateStudioShot>>, UpdateStudioShotMutationVariables> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  updateStudioShot(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateStudioShotMutationResult = NonNullable<Awaited<ReturnType<typeof updateStudioShot>>>
+    export type UpdateStudioShotMutationBody = BodyType<ShotUpdate>
+    export type UpdateStudioShotMutationError = ErrorType<unknown>
+    export type UpdateStudioShotMutationVariables = {id: number;data: BodyType<ShotUpdate>}
+
+    /**
+ * @summary Edit a storyboard shot
+ */
+export const useUpdateStudioShot = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateStudioShot>>, TError,UpdateStudioShotMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateStudioShot>>,
+        TError,
+        UpdateStudioShotMutationVariables,
+        TContext
+      > => {
+      return useMutation(getUpdateStudioShotMutationOptions(options));
+    }
+
+export const getReorderStudioShotsUrl = () => {
+
+
+
+
+  return `/api/studio/shots/reorder`
+}
+
+/**
+ * @summary Save the storyboard order for a scene
+ */
+export const reorderStudioShots = async (shotOrderInput: ShotOrderInput, options?: Parameters<typeof customFetch>[1]): Promise<Shot[]> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<Shot[]>(getReorderStudioShotsUrl(),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(shotOrderInput)
+  }
+);}
+
+
+
+
+
+export const getReorderStudioShotsMutationKey = () => ['reorderStudioShots'] as const;
+
+export const getReorderStudioShotsMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reorderStudioShots>>, TError,ReorderStudioShotsMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof reorderStudioShots>>, TError,ReorderStudioShotsMutationVariables, TContext> => {
+
+const mutationKey = getReorderStudioShotsMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof reorderStudioShots>>, ReorderStudioShotsMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  reorderStudioShots(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type ReorderStudioShotsMutationResult = NonNullable<Awaited<ReturnType<typeof reorderStudioShots>>>
+    export type ReorderStudioShotsMutationBody = BodyType<ShotOrderInput>
+    export type ReorderStudioShotsMutationError = ErrorType<unknown>
+    export type ReorderStudioShotsMutationVariables = {data: BodyType<ShotOrderInput>}
+
+    /**
+ * @summary Save the storyboard order for a scene
+ */
+export const useReorderStudioShots = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof reorderStudioShots>>, TError,ReorderStudioShotsMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof reorderStudioShots>>,
+        TError,
+        ReorderStudioShotsMutationVariables,
+        TContext
+      > => {
+      return useMutation(getReorderStudioShotsMutationOptions(options));
+    }
+
 export const getGenerateSceneDraftUrl = () => {
 
 
@@ -1341,6 +1792,94 @@ export const useSuggestShots = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getSuggestShotsMutationOptions(options));
+    }
+
+export const getGenerateFaithQuestionStoryUrl = () => {
+
+
+
+
+  return `/api/studio/ai/faith-question`
+}
+
+/**
+ * @summary Turn a difficult faith question into an age-aware story
+ */
+export const generateFaithQuestionStory = async (faithQuestionInput: FaithQuestionInput, options?: Parameters<typeof customFetch>[1]): Promise<FaithQuestionStory> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<FaithQuestionStory>(getGenerateFaithQuestionStoryUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(faithQuestionInput)
+  }
+);}
+
+
+
+
+
+export const getGenerateFaithQuestionStoryMutationKey = () => ['generateFaithQuestionStory'] as const;
+
+export const getGenerateFaithQuestionStoryMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof generateFaithQuestionStory>>, TError,GenerateFaithQuestionStoryMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof generateFaithQuestionStory>>, TError,GenerateFaithQuestionStoryMutationVariables, TContext> => {
+
+const mutationKey = getGenerateFaithQuestionStoryMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof generateFaithQuestionStory>>, GenerateFaithQuestionStoryMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  generateFaithQuestionStory(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type GenerateFaithQuestionStoryMutationResult = NonNullable<Awaited<ReturnType<typeof generateFaithQuestionStory>>>
+    export type GenerateFaithQuestionStoryMutationBody = BodyType<FaithQuestionInput>
+    export type GenerateFaithQuestionStoryMutationError = ErrorType<unknown>
+    export type GenerateFaithQuestionStoryMutationVariables = {data: BodyType<FaithQuestionInput>}
+
+    /**
+ * @summary Turn a difficult faith question into an age-aware story
+ */
+export const useGenerateFaithQuestionStory = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof generateFaithQuestionStory>>, TError,GenerateFaithQuestionStoryMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof generateFaithQuestionStory>>,
+        TError,
+        GenerateFaithQuestionStoryMutationVariables,
+        TContext
+      > => {
+      return useMutation(getGenerateFaithQuestionStoryMutationOptions(options));
     }
 
 export const getGenerateShotClipUrl = () => {
