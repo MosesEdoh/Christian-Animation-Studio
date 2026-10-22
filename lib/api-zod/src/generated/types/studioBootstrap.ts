@@ -11,6 +11,7 @@ import type { Episode } from './episode';
 import type { Project } from './project';
 import type { Scene } from './scene';
 import type { Shot } from './shot';
+import type { StudioAsset } from './studioAsset';
 
 export interface StudioBootstrap {
   project: Project;
@@ -19,4 +20,5 @@ export interface StudioBootstrap {
   characters: Character[];
   shots: Shot[];
   clips: Clip[];
+  assets: StudioAsset[];
 }

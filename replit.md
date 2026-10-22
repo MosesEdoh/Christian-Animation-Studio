@@ -25,21 +25,26 @@ Private creative workspace for writing, directing, storyboarding, and generating
 - `artifacts/creative-studio/src/App.tsx` — main studio workspace and workflow views
 - `artifacts/creative-studio/src/index.css` — evening storyboard room visual system
 - `artifacts/api-server/src/routes/studio.ts` — studio bootstrap, AI actions, and clip generation routes
+- `artifacts/api-server/src/routes/storage.ts` — signed private asset uploads and protected reads
+- `artifacts/api-server/src/routes/auth.ts` — Replit OIDC browser sign-in and sessions
 - `artifacts/api-server/src/lib/ai.ts` — direct Gemini client with transient retry handling
 - `artifacts/api-server/src/lib/video-provider.ts` — swappable mock / Runway / Luma / Pika adapter
 - `lib/api-spec/openapi.yaml` — source-of-truth API contract
 - `lib/db/src/schema/studio.ts` — Postgres schema and seed-backed studio entities
+- `lib/db/src/schema/auth.ts` — session and user tables required for signed-in uploads
 
 ## Architecture decisions
 
 - The first build uses a single active studio project with database-backed episodes, scenes, characters, shots, and clips.
 - Gemini text actions run server-side so the API key never reaches the browser.
 - Video generation is isolated behind `video-provider.ts`; `VIDEO_PROVIDER=mock` keeps local development usable until a provider is configured.
-- Reference image uploads currently use browser-session previews; persistent file storage is intentionally a follow-up to avoid storing base64 bytes in Postgres.
+- Reference images are uploaded directly to private App Storage using presigned URLs; Postgres stores object paths and metadata, not image bytes.
+- Reference uploads and private asset reads require an authenticated Replit session.
+- The series ZIP export includes scripts, shot lists, character data, reference images, and provider clips when they are browser-downloadable; otherwise it records provider URLs.
 
 ## Product
 
-The studio provides a dashboard, screenplay editor, AI co-writer, audience safety check, character bible, director notes, cinematography shot suggestions, storyboard upload/reordering, and a per-shot animation queue.
+The studio provides a dashboard, screenplay editor, AI co-writer, audience safety check, character bible, director notes, cinematography shot suggestions, persistent storyboard and character references, a per-shot animation queue, and an all-episodes ZIP export.
 
 ## User preferences
 
@@ -49,6 +54,7 @@ The studio provides a dashboard, screenplay editor, AI co-writer, audience safet
 
 - Run `pnpm --filter @workspace/api-spec run codegen` after changing `lib/api-spec/openapi.yaml`.
 - Gemini direct API keys for new users may reject older model names; the client defaults to `GEMINI_MODEL` or `gemini-3.6-flash`.
+- A mock video provider creates queue records, not rendered video; real media downloads depend on the selected provider returning accessible clip URLs.
 
 ## Pointers
 

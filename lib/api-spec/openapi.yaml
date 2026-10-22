@@ -14,6 +14,10 @@ tags:
     description: Creative studio workspace
   - name: ai
     description: AI-assisted writing and directing
+  - name: auth
+    description: Browser and mobile authentication
+  - name: storage
+    description: Persistent studio asset uploads
 paths:
   /healthz:
     get:
@@ -28,6 +32,76 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /auth/user:
+    get:
+      operationId: getCurrentAuthUser
+      tags: [auth]
+      summary: Get the current signed-in user
+      responses:
+        "200":
+          description: Authentication state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthUserEnvelope"
+  /login:
+    get:
+      operationId: beginBrowserLogin
+      tags: [auth]
+      summary: Start browser sign-in
+      parameters:
+        - name: returnTo
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "302":
+          description: Redirect to sign-in
+  /callback:
+    get:
+      operationId: handleBrowserLoginCallback
+      tags: [auth]
+      summary: Complete browser sign-in
+      responses:
+        "302":
+          description: Redirect to the workspace
+  /logout:
+    get:
+      operationId: logoutBrowserSession
+      tags: [auth]
+      summary: Sign out
+      parameters:
+        - name: returnTo
+          in: query
+          required: false
+          schema: { type: string }
+      responses:
+        "302":
+          description: Redirect after sign-out
+  /storage/uploads/request-url:
+    post:
+      operationId: requestUploadUrl
+      tags: [storage]
+      summary: Request a private App Storage upload URL
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UploadUrlRequest"
+      responses:
+        "200":
+          description: Upload URL and object path
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UploadUrlResponse"
+        "401":
+          description: Sign in is required to upload assets
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
   /studio/bootstrap:
     get:
       operationId: getStudioBootstrap
@@ -40,6 +114,24 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/StudioBootstrap"
+  /studio/assets:
+    post:
+      operationId: createStudioAsset
+      tags: [studio]
+      summary: Save metadata for an uploaded reference asset
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/StudioAssetInput"
+      responses:
+        "201":
+          description: Saved reference asset
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StudioAsset"
   /studio/project:
     patch:
       operationId: updateStudioProject
@@ -197,6 +289,43 @@ components:
       schema:
         type: integer
   schemas:
+    ErrorEnvelope:
+      type: object
+      properties:
+        error: { type: string }
+      required: [error]
+    AuthUser:
+      type: object
+      properties:
+        id: { type: string }
+        email: { type: ["string", "null"] }
+        firstName: { type: ["string", "null"] }
+        lastName: { type: ["string", "null"] }
+        profileImageUrl: { type: ["string", "null"] }
+      required: [id, email, firstName, lastName, profileImageUrl]
+    AuthUserEnvelope:
+      type: object
+      properties:
+        user:
+          oneOf:
+            - $ref: "#/components/schemas/AuthUser"
+            - type: "null"
+      required: [user]
+    UploadUrlRequest:
+      type: object
+      properties:
+        name: { type: string, minLength: 1 }
+        size: { type: integer, minimum: 1 }
+        contentType: { type: string, minLength: 1 }
+      required: [name, size, contentType]
+    UploadUrlResponse:
+      type: object
+      properties:
+        uploadURL: { type: string, format: uri }
+        objectPath: { type: string }
+        metadata:
+          $ref: "#/components/schemas/UploadUrlRequest"
+      required: [uploadURL, objectPath, metadata]
     HealthStatus:
       type: object
       properties:
@@ -326,7 +455,35 @@ components:
         clips:
           type: array
           items: { $ref: "#/components/schemas/Clip" }
-      required: [project, episodes, scenes, characters, shots, clips]
+        assets:
+          type: array
+          items: { $ref: "#/components/schemas/StudioAsset" }
+      required: [project, episodes, scenes, characters, shots, clips, assets]
+    StudioAsset:
+      type: object
+      properties:
+        id: { type: integer }
+        projectId: { type: integer }
+        episodeId: { type: ["integer", "null"] }
+        sceneId: { type: ["integer", "null"] }
+        characterId: { type: ["integer", "null"] }
+        kind: { type: string, enum: [storyboard, character-reference] }
+        objectPath: { type: string }
+        name: { type: string }
+        contentType: { type: string }
+        createdAt: { type: string, format: date-time }
+      required: [id, projectId, episodeId, sceneId, characterId, kind, objectPath, name, contentType, createdAt]
+    StudioAssetInput:
+      type: object
+      properties:
+        episodeId: { type: ["integer", "null"] }
+        sceneId: { type: ["integer", "null"] }
+        characterId: { type: ["integer", "null"] }
+        kind: { type: string, enum: [storyboard, character-reference] }
+        objectPath: { type: string, minLength: 1 }
+        name: { type: string, minLength: 1 }
+        contentType: { type: string, minLength: 1 }
+      required: [kind, objectPath, name, contentType]
     AiScenePrompt:
       type: object
       required: [premise, characters, tone]

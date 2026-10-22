@@ -18,6 +18,76 @@ export const HealthCheckResponse = zod.object({
 
 
 /**
+ * @summary Get the current signed-in user
+ */
+export const GetCurrentAuthUserResponse = zod.object({
+  "user": zod.union([zod.object({
+  "id": zod.string(),
+  "email": zod.string().nullable(),
+  "firstName": zod.string().nullable(),
+  "lastName": zod.string().nullable(),
+  "profileImageUrl": zod.string().nullable()
+}),zod.null()])
+})
+
+
+/**
+ * @summary Start browser sign-in
+ */
+export const BeginBrowserLoginQueryParams = zod.object({
+  "returnTo": zod.coerce.string().optional()
+})
+
+export const BeginBrowserLoginResponse = zod.void()
+
+
+/**
+ * @summary Complete browser sign-in
+ */
+export const HandleBrowserLoginCallbackResponse = zod.void()
+
+
+/**
+ * @summary Sign out
+ */
+export const LogoutBrowserSessionQueryParams = zod.object({
+  "returnTo": zod.coerce.string().optional()
+})
+
+export const LogoutBrowserSessionResponse = zod.void()
+
+
+/**
+ * @summary Request a private App Storage upload URL
+ */
+
+
+
+
+
+export const RequestUploadUrlBody = zod.object({
+  "name": zod.string().min(1),
+  "size": zod.number().int().min(1),
+  "contentType": zod.string().min(1)
+})
+
+
+
+
+
+
+export const RequestUploadUrlResponse = zod.object({
+  "uploadURL": zod.string().url(),
+  "objectPath": zod.string(),
+  "metadata": zod.object({
+  "name": zod.string().min(1),
+  "size": zod.number().int().min(1),
+  "contentType": zod.string().min(1)
+})
+})
+
+
+/**
  * @summary Load the studio workspace
  */
 export const GetStudioBootstrapResponse = zod.object({
@@ -82,7 +152,51 @@ export const GetStudioBootstrapResponse = zod.object({
   "thumbnailUrl": zod.string().nullable(),
   "duration": zod.string(),
   "createdAt": zod.coerce.date()
+})),
+  "assets": zod.array(zod.object({
+  "id": zod.number().int(),
+  "projectId": zod.number().int(),
+  "episodeId": zod.number().int().nullable(),
+  "sceneId": zod.number().int().nullable(),
+  "characterId": zod.number().int().nullable(),
+  "kind": zod.enum(['storyboard', 'character-reference']),
+  "objectPath": zod.string(),
+  "name": zod.string(),
+  "contentType": zod.string(),
+  "createdAt": zod.coerce.date()
 }))
+})
+
+
+/**
+ * @summary Save metadata for an uploaded reference asset
+ */
+
+
+
+
+
+export const CreateStudioAssetBody = zod.object({
+  "episodeId": zod.number().int().nullish(),
+  "sceneId": zod.number().int().nullish(),
+  "characterId": zod.number().int().nullish(),
+  "kind": zod.enum(['storyboard', 'character-reference']),
+  "objectPath": zod.string().min(1),
+  "name": zod.string().min(1),
+  "contentType": zod.string().min(1)
+})
+
+export const CreateStudioAssetResponse = zod.object({
+  "id": zod.number().int(),
+  "projectId": zod.number().int(),
+  "episodeId": zod.number().int().nullable(),
+  "sceneId": zod.number().int().nullable(),
+  "characterId": zod.number().int().nullable(),
+  "kind": zod.enum(['storyboard', 'character-reference']),
+  "objectPath": zod.string(),
+  "name": zod.string(),
+  "contentType": zod.string(),
+  "createdAt": zod.coerce.date()
 })
 
 

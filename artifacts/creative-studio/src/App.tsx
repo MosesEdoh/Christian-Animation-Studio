@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
+import { zipSync, strToU8 } from 'fflate';
 import {
   AlertTriangle,
   Aperture,
@@ -46,7 +47,9 @@ import {
   type Project,
   type Scene,
   type Shot,
+  type StudioAsset,
   type StudioBootstrap,
+  type AuthUser,
 } from '@workspace/api-client-react';
 import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
@@ -60,6 +63,131 @@ type View = 'dashboard' | 'script' | 'directing' | 'cinematography' | 'animation
 type ToastState = { message: string; kind?: 'error' | 'success' };
 type ProjectForm = Pick<Project, 'title' | 'logline' | 'audience' | 'seasonLabel'>;
 type CharacterForm = Omit<Character, 'id' | 'projectId'>;
+
+function assetSrc(objectPath: string): string {
+  return objectPath.startsWith('/objects/')
+    ? `/api/storage${objectPath}`
+    : objectPath;
+}
+
+async function downloadSeriesPackage(bootstrap: StudioBootstrap): Promise<void> {
+  const files: Record<string, Uint8Array> = {};
+  const safeName = (value: string) =>
+    value.replace(/[<>:"/\\|?*\x00-\x1f]/g, '-').trim() || 'untitled';
+  const projectName = safeName(bootstrap.project.title);
+  const episodes: Array<Record<string, unknown>> = [];
+
+  for (const episode of bootstrap.episodes) {
+    const episodeScenes = bootstrap.scenes
+      .filter((scene) => scene.episodeId === episode.id)
+      .sort((a, b) => a.number - b.number);
+    const episodeShots = bootstrap.shots
+      .filter((shot) => episodeScenes.some((scene) => scene.id === shot.sceneId))
+      .sort((a, b) => a.sceneId - b.sceneId || a.number - b.number);
+    const episodeClips = bootstrap.clips.filter((clip) =>
+      episodeShots.some((shot) => shot.id === clip.shotId),
+    );
+    const folder = `episodes/E${String(episode.number).padStart(2, '0')}-${safeName(episode.title)}`;
+    const script = [
+      `${bootstrap.project.title} — EPISODE ${String(episode.number).padStart(2, '0')}: ${episode.title}`,
+      episode.summary,
+      '',
+      ...episodeScenes.flatMap((scene) => [
+        scene.heading,
+        scene.synopsis,
+        '',
+        scene.content,
+        '',
+      ]),
+    ].join('\n');
+    files[`${folder}/script.txt`] = strToU8(script);
+    files[`${folder}/shot-list.json`] = strToU8(JSON.stringify(
+      episodeShots.map((shot) => ({
+        ...shot,
+        sceneHeading: episodeScenes.find((scene) => scene.id === shot.sceneId)?.heading,
+        clips: episodeClips.filter((clip) => clip.shotId === shot.id),
+      })),
+      null,
+      2,
+    ));
+    episodes.push({
+      number: episode.number,
+      title: episode.title,
+      summary: episode.summary,
+      status: episode.status,
+      progress: episode.progress,
+      duration: episode.duration,
+      script: `${folder}/script.txt`,
+      shotList: `${folder}/shot-list.json`,
+    });
+  }
+
+  files['character-bible.json'] = strToU8(JSON.stringify(bootstrap.characters, null, 2));
+  files['series-manifest.json'] = strToU8(JSON.stringify({
+    project: bootstrap.project,
+    episodes,
+    clips: bootstrap.clips,
+    references: bootstrap.assets.map((asset) => ({
+      ...asset,
+      file: `references/${String(asset.id).padStart(4, '0')}-${safeName(asset.name)}`,
+    })),
+  }, null, 2));
+  files['README.txt'] = strToU8([
+    `${bootstrap.project.title} — series production package`,
+    '',
+    'Included: all episode scripts, shot lists, character bible, uploaded reference images, and clips that the provider makes downloadable.',
+    'Provider-hosted clips that cannot be fetched by the browser are listed in clip-links.txt and series-manifest.json.',
+    'A mock provider records jobs but does not create video files.',
+  ].join('\n'));
+
+  const clipLinks: string[] = [];
+  for (const asset of bootstrap.assets) {
+    const response = await fetch(assetSrc(asset.objectPath), { credentials: 'include' });
+    if (!response.ok) {
+      throw new Error(response.status === 401
+        ? 'Sign in again to include private reference images in the download.'
+        : `Could not download reference image: ${asset.name}`);
+    }
+    const filename = `${String(asset.id).padStart(4, '0')}-${safeName(asset.name)}`;
+    files[`references/${filename}`] = new Uint8Array(await response.arrayBuffer());
+  }
+
+  let downloadedVideoBytes = 0;
+  for (const clip of bootstrap.clips) {
+    if (!clip.url) continue;
+    const fileName = `clip-${String(clip.id).padStart(4, '0')}`;
+    try {
+      const clipUrl = new URL(clip.url, window.location.href);
+      if (clipUrl.protocol !== 'https:' && clipUrl.origin !== window.location.origin) {
+        throw new Error('Unsupported video URL');
+      }
+      const response = await fetch(clipUrl, { credentials: 'omit' });
+      const contentLength = Number(response.headers.get('content-length') ?? 0);
+      if (!response.ok || (contentLength && downloadedVideoBytes + contentLength > 250 * 1024 * 1024)) {
+        throw new Error('Video is not directly downloadable');
+      }
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      if (!bytes.length || downloadedVideoBytes + bytes.length > 250 * 1024 * 1024) {
+        throw new Error('Video is larger than the export limit');
+      }
+      downloadedVideoBytes += bytes.length;
+      const mime = response.headers.get('content-type') ?? '';
+      const extension = mime.includes('webm') ? 'webm' : mime.includes('quicktime') ? 'mov' : 'mp4';
+      files[`clips/${fileName}.${extension}`] = bytes;
+    } catch {
+      clipLinks.push(`Clip ${clip.id} (${clip.provider}, ${clip.status}): ${clip.url}`);
+    }
+  }
+  if (clipLinks.length) files['clip-links.txt'] = strToU8(clipLinks.join('\n'));
+
+  const archive = zipSync(files, { level: 6 });
+  const url = URL.createObjectURL(new Blob([archive], { type: 'application/zip' }));
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = `${projectName}-series-package.zip`;
+  anchor.click();
+  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 
 const navItems: Array<{ id: View; label: string; meta: string; icon: LucideIcon }> = [
   { id: 'dashboard', label: 'Dashboard', meta: '00', icon: Layers3 },
@@ -126,6 +254,9 @@ function StudioWorkspace() {
     flags: string[];
     suggestions: string[];
   } | null>(null);
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [authChecked, setAuthChecked] = useState(false);
+  const [exportPending, setExportPending] = useState(false);
 
   const queryClient = useQueryClient();
   const bootstrapQuery = useGetStudioBootstrap({
@@ -146,6 +277,26 @@ function StudioWorkspace() {
   const characters = bootstrap?.characters ?? [];
   const shots = bootstrap?.shots ?? [];
   const clips = bootstrap?.clips ?? [];
+  const assets = bootstrap?.assets ?? [];
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch('/api/auth/user', { credentials: 'include' })
+      .then(async (response) => {
+        if (!response.ok) throw new Error('Unable to check sign-in');
+        return response.json() as Promise<{ user: AuthUser | null }>;
+      })
+      .then(({ user }) => {
+        if (!cancelled) setAuthUser(user);
+      })
+      .catch(() => {
+        if (!cancelled) setAuthUser(null);
+      })
+      .finally(() => {
+        if (!cancelled) setAuthChecked(true);
+      });
+    return () => { cancelled = true; };
+  }, []);
 
   const activeEpisode = useMemo(
     () => episodes.find((episode) => episode.id === project?.activeEpisodeId) ?? episodes[0],
@@ -214,6 +365,62 @@ function StudioWorkspace() {
     queryClient.setQueryData<StudioBootstrap>(getGetStudioBootstrapQueryKey(), (current) =>
       current ? patch(current) : current,
     );
+  };
+
+  const uploadReferenceAsset = async (
+    file: File,
+    metadata: {
+      kind: 'storyboard' | 'character-reference';
+      episodeId?: number | null;
+      sceneId?: number | null;
+      characterId?: number | null;
+    },
+  ): Promise<string> => {
+    if (!file.type.startsWith('image/')) throw new Error('Choose an image file.');
+    if (file.size > 10 * 1024 * 1024) throw new Error('Images must be 10 MB or smaller.');
+    const request = await fetch('/api/storage/uploads/request-url', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: file.name, size: file.size, contentType: file.type }),
+    });
+    if (request.status === 401) throw new Error('Sign in to upload reference images.');
+    if (!request.ok) throw new Error('Could not prepare the image upload.');
+    const upload = await request.json() as { uploadURL: string; objectPath: string };
+    const put = await fetch(upload.uploadURL, {
+      method: 'PUT',
+      headers: { 'Content-Type': file.type },
+      body: file,
+    });
+    if (!put.ok) throw new Error('The image could not be uploaded to App Storage.');
+    const saved = await fetch('/api/studio/assets', {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        ...metadata,
+        objectPath: upload.objectPath,
+        name: file.name,
+        contentType: file.type,
+      }),
+    });
+    if (!saved.ok) throw new Error('The image uploaded, but its reference could not be saved.');
+    const asset = await saved.json() as StudioAsset;
+    patchBootstrap((current) => ({ ...current, assets: [...current.assets, asset] }));
+    return asset.objectPath;
+  };
+
+  const exportSeries = async () => {
+    if (!bootstrap) return;
+    setExportPending(true);
+    try {
+      await downloadSeriesPackage(bootstrap);
+      notify('Series package downloaded.');
+    } catch (error) {
+      notify(error instanceof Error ? error.message : 'The series package could not be created.', 'error');
+    } finally {
+      setExportPending(false);
+    }
   };
 
   const saveProject = () => {
@@ -422,6 +629,12 @@ function StudioWorkspace() {
             setShotBeat={setShotBeat}
             runShotSuggestions={runShotSuggestions}
             pending={suggestShots.isPending}
+            referenceAssets={assets.filter((asset) => asset.sceneId === activeScene?.id && asset.kind === 'storyboard')}
+            onUploadReference={(file) => uploadReferenceAsset(file, {
+              kind: 'storyboard',
+              episodeId: activeEpisode?.id ?? null,
+              sceneId: activeScene?.id ?? null,
+            })}
           />
         );
       case 'animation':
@@ -447,6 +660,9 @@ function StudioWorkspace() {
             episodes={episodes}
             scenes={scenes}
             characters={characters}
+            bootstrap={bootstrap}
+            exportSeries={exportSeries}
+            exportPending={exportPending}
             openProjectEditor={() => setShowProjectEditor(true)}
             openNewCharacter={openNewCharacter}
             openEditCharacter={openEditCharacter}
@@ -456,12 +672,12 @@ function StudioWorkspace() {
   };
 
   if (bootstrapQuery.isLoading) {
-    return <WorkspaceFrame view={view} setView={setView}><LoadingWorkspace /></WorkspaceFrame>;
+    return <WorkspaceFrame view={view} setView={setView} authUser={authUser} authChecked={authChecked}><LoadingWorkspace /></WorkspaceFrame>;
   }
 
   if (bootstrapQuery.isError || !bootstrap) {
     return (
-      <WorkspaceFrame view={view} setView={setView}>
+      <WorkspaceFrame view={view} setView={setView} authUser={authUser} authChecked={authChecked}>
         <div className="content-wrap">
           <div className="error-panel" data-testid="panel-bootstrap-error">
             <h2>The room lights are still warming up.</h2>
@@ -481,7 +697,7 @@ function StudioWorkspace() {
   }
 
   return (
-    <WorkspaceFrame view={view} setView={setView} project={project}>
+    <WorkspaceFrame view={view} setView={setView} project={project} authUser={authUser} authChecked={authChecked}>
       {renderView()}
       {showProjectEditor ? (
         <ProjectEditor
@@ -500,6 +716,10 @@ function StudioWorkspace() {
           onClose={() => setShowCharacterEditor(false)}
           onSave={saveCharacter}
           pending={createCharacter.isPending || updateCharacter.isPending}
+          onUploadReference={(file) => uploadReferenceAsset(file, {
+            kind: 'character-reference',
+            characterId: editingCharacter?.id ?? null,
+          })}
         />
       ) : null}
       {toast ? (
@@ -519,11 +739,15 @@ function WorkspaceFrame({
   view,
   setView,
   project,
+  authUser,
+  authChecked,
 }: {
   children: ReactNode;
   view: View;
   setView: (view: View) => void;
   project?: Project;
+  authUser: AuthUser | null;
+  authChecked: boolean;
 }) {
   return (
     <div className="studio-app">
@@ -572,7 +796,12 @@ function WorkspaceFrame({
             </div>
             <div className="topbar-actions">
               <span className="status-pill"><span className="signal-dot" /> {project?.seasonLabel ?? 'Workspace ready'}</span>
-              <div className="avatar" data-testid="text-creator-avatar">JR</div>
+              {!authChecked ? null : authUser ? (
+                <a className="btn btn-quiet" href={`/api/logout?returnTo=${encodeURIComponent(window.location.pathname)}`} data-testid="link-sign-out">Sign out</a>
+              ) : (
+                <a className="btn btn-quiet" href={`/api/login?returnTo=${encodeURIComponent(window.location.pathname)}`} data-testid="link-sign-in">Sign in to save images</a>
+              )}
+              <div className="avatar" data-testid="text-creator-avatar">{authUser?.firstName?.slice(0, 1) ?? 'JR'}</div>
             </div>
           </header>
           {children}
@@ -605,6 +834,9 @@ function DashboardView({
   episodes,
   scenes,
   characters,
+  bootstrap,
+  exportSeries,
+  exportPending,
   openProjectEditor,
   openNewCharacter,
   openEditCharacter,
@@ -613,6 +845,9 @@ function DashboardView({
   episodes: Episode[];
   scenes: Scene[];
   characters: Character[];
+  bootstrap: StudioBootstrap;
+  exportSeries: () => void;
+  exportPending: boolean;
   openProjectEditor: () => void;
   openNewCharacter: () => void;
   openEditCharacter: (character: Character) => void;
@@ -654,12 +889,18 @@ function DashboardView({
           <p className="page-subtitle">Your writers room and animation control room, tuned for the next honest beat.</p>
         </div>
         <div style={{ display: 'flex', gap: 9, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+          <button type="button" className="btn btn-quiet" data-testid="button-export-series" onClick={exportSeries} disabled={exportPending}>
+            <Film size={14} /> {exportPending ? 'Packing…' : 'Download series ZIP'}
+          </button>
           <button type="button" className="btn btn-quiet" data-testid="button-export-script" onClick={downloadScript}>
             <FileText size={14} /> Export .txt
           </button>
           <button type="button" className="btn btn-primary" data-testid="button-edit-project" onClick={openProjectEditor}>
             <PenLine size={14} /> Edit project card
           </button>
+          <span className="row-caption" style={{ flexBasis: '100%', textAlign: 'right' }}>
+            ZIP includes scripts, references, shot lists, and downloadable provider clips when available.
+          </span>
         </div>
       </div>
       <div className="grid-hero">
@@ -910,6 +1151,8 @@ function CinematographyView({
   setShotBeat,
   runShotSuggestions,
   pending,
+  referenceAssets,
+  onUploadReference,
 }: {
   activeScene?: Scene;
   scenes: Scene[];
@@ -921,10 +1164,13 @@ function CinematographyView({
   setShotBeat: (value: string) => void;
   runShotSuggestions: () => void;
   pending: boolean;
+  referenceAssets: StudioAsset[];
+  onUploadReference: (file: File) => Promise<string>;
 }) {
   const [orderedShots, setOrderedShots] = useState(shots);
   const [draggedShotId, setDraggedShotId] = useState<number | null>(null);
-  const [storyboardImage, setStoryboardImage] = useState<string | null>(null);
+  const [uploadingReference, setUploadingReference] = useState(false);
+  const [referenceError, setReferenceError] = useState('');
 
   useEffect(() => {
     setOrderedShots(shots);
@@ -959,10 +1205,28 @@ function CinematographyView({
           <label htmlFor="storyboard-upload">Reference board or sketch panel</label>
           <input id="storyboard-upload" type="file" accept="image/*" data-testid="input-storyboard-upload" onChange={(event) => {
             const file = event.target.files?.[0];
-            if (file) setStoryboardImage(URL.createObjectURL(file));
+            if (file) {
+              setUploadingReference(true);
+              setReferenceError('');
+              void onUploadReference(file)
+                .catch((error: unknown) => setReferenceError(error instanceof Error ? error.message : 'Upload failed.'))
+                .finally(() => setUploadingReference(false));
+              event.target.value = '';
+            }
           }} />
+          {uploadingReference ? <span className="row-caption">Uploading and saving reference…</span> : null}
+          {referenceError ? <span className="field-error" role="alert">{referenceError}</span> : null}
         </div>
-        {storyboardImage ? <div className="storyboard-preview" data-testid="panel-storyboard-upload"><img src={storyboardImage} alt="Uploaded storyboard reference" /></div> : null}
+        {referenceAssets.length ? (
+          <div className="storyboard-assets" data-testid="panel-storyboard-upload">
+            {referenceAssets.map((asset) => (
+              <figure className="storyboard-preview" key={asset.id}>
+                <img src={assetSrc(asset.objectPath)} alt={asset.name} />
+                <figcaption>{asset.name}</figcaption>
+              </figure>
+            ))}
+          </div>
+        ) : null}
         {orderedShots.length ? <div className="shot-grid">{orderedShots.map((shot) => <div className="shot-card" key={shot.id} draggable onDragStart={() => setDraggedShotId(shot.id)} onDragOver={(event) => event.preventDefault()} onDrop={() => moveShot(shot.id)} data-testid={`card-shot-${shot.id}`}><span className="shot-index">SHOT {String(shot.number).padStart(2, '0')} · {shot.status}</span><h3>{shot.description}</h3><div className="shot-tags"><span className="shot-tag">{shot.shotType}</span><span className="shot-tag">{shot.movement}</span><span className="shot-tag">{shot.angle}</span></div><p className="row-caption" style={{ marginTop: 14 }}>{shot.beat} · {shot.duration}</p></div>)}</div> : <div className="empty-state"><Aperture size={22} /><div><strong>No frames on this scene yet</strong><p>Describe the emotional beat above and ask for a visual read.</p></div></div>}
       </section>
     </div>
@@ -1050,6 +1314,7 @@ function CharacterEditor({
   onClose,
   onSave,
   pending,
+  onUploadReference,
 }: {
   form: CharacterForm;
   setForm: (form: CharacterForm) => void;
@@ -1057,8 +1322,11 @@ function CharacterEditor({
   onClose: () => void;
   onSave: () => void;
   pending: boolean;
+  onUploadReference: (file: File) => Promise<string>;
 }) {
   const update = (key: keyof CharacterForm, value: string) => setForm({ ...form, [key]: value });
+  const [uploadingReference, setUploadingReference] = useState(false);
+  const [referenceError, setReferenceError] = useState('');
   return (
     <div className="modal-scrim" role="presentation">
       <div className="modal" role="dialog" aria-modal="true" aria-labelledby="character-editor-title" data-testid="modal-character-editor">
@@ -1070,13 +1338,23 @@ function CharacterEditor({
           <div className="field"><label htmlFor="character-arc">Arc</label><textarea id="character-arc" value={form.arc} onChange={(event) => update('arc', event.target.value)} data-testid="input-character-arc" /></div>
           <div className="field"><label htmlFor="character-lesson">Faith lesson</label><textarea id="character-lesson" value={form.faithLesson} onChange={(event) => update('faithLesson', event.target.value)} data-testid="input-character-lesson" /></div>
           <div className="field full"><label htmlFor="character-visual-notes">Visual notes</label><textarea id="character-visual-notes" value={form.visualNotes} onChange={(event) => update('visualNotes', event.target.value)} data-testid="input-character-visual-notes" /></div>
-          <div className="field full"><label htmlFor="character-reference">Reference image URL (optional)</label><input id="character-reference" value={form.referenceImageUrl?.startsWith('blob:') ? '' : (form.referenceImageUrl ?? '')} onChange={(event) => update('referenceImageUrl', event.target.value)} data-testid="input-character-reference" /></div>
-          <div className="field full"><label htmlFor="character-reference-upload">Upload a reference for this session</label><input id="character-reference-upload" type="file" accept="image/*" data-testid="input-character-reference-upload" onChange={(event) => {
+          <div className="field full"><label htmlFor="character-reference">Reference image URL (optional)</label><input id="character-reference" value={form.referenceImageUrl ?? ''} onChange={(event) => update('referenceImageUrl', event.target.value)} data-testid="input-character-reference" /></div>
+          <div className="field full"><label htmlFor="character-reference-upload">Upload a persistent reference image</label><input id="character-reference-upload" type="file" accept="image/*" data-testid="input-character-reference-upload" onChange={(event) => {
             const file = event.target.files?.[0];
-            if (file) update('referenceImageUrl', URL.createObjectURL(file));
-          }} />{form.referenceImageUrl?.startsWith('blob:') ? <img className="reference-preview" src={form.referenceImageUrl} alt={`${form.name || 'Character'} reference preview`} /> : null}</div>
+            if (file) {
+              setUploadingReference(true);
+              setReferenceError('');
+              void onUploadReference(file)
+                .then((objectPath) => update('referenceImageUrl', objectPath))
+                .catch((error: unknown) => setReferenceError(error instanceof Error ? error.message : 'Upload failed.'))
+                .finally(() => setUploadingReference(false));
+              event.target.value = '';
+            }
+          }} />{uploadingReference ? <span className="row-caption">Uploading and saving reference…</span> : null}
+          {referenceError ? <span className="field-error" role="alert">{referenceError}</span> : null}
+          {form.referenceImageUrl ? <img className="reference-preview" src={assetSrc(form.referenceImageUrl)} alt={`${form.name || 'Character'} reference preview`} /> : null}</div>
         </div>
-        <div className="form-actions"><button type="button" className="btn btn-quiet" data-testid="button-cancel-character-editor" onClick={onClose}>Cancel</button><button type="button" className="btn btn-primary" data-testid="button-save-character" onClick={onSave} disabled={pending || !form.name.trim()}><Save size={14} /> {pending ? 'Saving…' : editing ? 'Save changes' : 'Add character'}</button></div>
+        <div className="form-actions"><button type="button" className="btn btn-quiet" data-testid="button-cancel-character-editor" onClick={onClose}>Cancel</button><button type="button" className="btn btn-primary" data-testid="button-save-character" onClick={onSave} disabled={pending || uploadingReference || !form.name.trim()}><Save size={14} /> {pending ? 'Saving…' : editing ? 'Save changes' : 'Add character'}</button></div>
       </div>
     </div>
   );

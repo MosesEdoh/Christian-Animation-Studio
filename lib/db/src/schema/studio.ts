@@ -78,6 +78,21 @@ export const studioClipsTable = pgTable("studio_clips", {
     .defaultNow(),
 });
 
+export const studioAssetsTable = pgTable("studio_assets", {
+  id: serial("id").primaryKey(),
+  projectId: integer("project_id").notNull(),
+  episodeId: integer("episode_id"),
+  sceneId: integer("scene_id"),
+  characterId: integer("character_id"),
+  kind: text("kind").notNull(),
+  objectPath: text("object_path").notNull(),
+  name: text("name").notNull(),
+  contentType: text("content_type").notNull(),
+  createdAt: timestamp("created_at", { withTimezone: true })
+    .notNull()
+    .defaultNow(),
+});
+
 export const insertStudioProjectSchema = createInsertSchema(
   studioProjectsTable,
 ).omit({ id: true });
@@ -96,6 +111,9 @@ export const insertStudioShotSchema = createInsertSchema(
 export const insertStudioClipSchema = createInsertSchema(
   studioClipsTable,
 ).omit({ id: true, createdAt: true });
+export const insertStudioAssetSchema = createInsertSchema(
+  studioAssetsTable,
+).omit({ id: true, createdAt: true });
 
 export type StudioProject = typeof studioProjectsTable.$inferSelect;
 export type StudioEpisode = typeof studioEpisodesTable.$inferSelect;
@@ -103,4 +121,5 @@ export type StudioScene = typeof studioScenesTable.$inferSelect;
 export type StudioCharacter = typeof studioCharactersTable.$inferSelect;
 export type StudioShot = typeof studioShotsTable.$inferSelect;
 export type StudioClip = typeof studioClipsTable.$inferSelect;
+export type StudioAsset = typeof studioAssetsTable.$inferSelect;
 export type InsertStudioCharacter = z.infer<typeof insertStudioCharacterSchema>;

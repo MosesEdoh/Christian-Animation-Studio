@@ -5,6 +5,41 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+export interface ErrorEnvelope {
+  error: string;
+}
+
+export interface AuthUser {
+  id: string;
+  /** @nullable */
+  email: string | null;
+  /** @nullable */
+  firstName: string | null;
+  /** @nullable */
+  lastName: string | null;
+  /** @nullable */
+  profileImageUrl: string | null;
+}
+
+export interface AuthUserEnvelope {
+  user: AuthUser | null;
+}
+
+export interface UploadUrlRequest {
+  /** @minLength 1 */
+  name: string;
+  /** @minimum 1 */
+  size: number;
+  /** @minLength 1 */
+  contentType: string;
+}
+
+export interface UploadUrlResponse {
+  uploadURL: string;
+  objectPath: string;
+  metadata: UploadUrlRequest;
+}
+
 export interface HealthStatus {
   status: string;
 }
@@ -150,6 +185,30 @@ export interface Clip {
   createdAt: string;
 }
 
+export type StudioAssetKind = typeof StudioAssetKind[keyof typeof StudioAssetKind];
+
+
+export const StudioAssetKind = {
+  storyboard: 'storyboard',
+  'character-reference': 'character-reference',
+} as const;
+
+export interface StudioAsset {
+  id: number;
+  projectId: number;
+  /** @nullable */
+  episodeId: number | null;
+  /** @nullable */
+  sceneId: number | null;
+  /** @nullable */
+  characterId: number | null;
+  kind: StudioAssetKind;
+  objectPath: string;
+  name: string;
+  contentType: string;
+  createdAt: string;
+}
+
 export interface StudioBootstrap {
   project: Project;
   episodes: Episode[];
@@ -157,6 +216,31 @@ export interface StudioBootstrap {
   characters: Character[];
   shots: Shot[];
   clips: Clip[];
+  assets: StudioAsset[];
+}
+
+export type StudioAssetInputKind = typeof StudioAssetInputKind[keyof typeof StudioAssetInputKind];
+
+
+export const StudioAssetInputKind = {
+  storyboard: 'storyboard',
+  'character-reference': 'character-reference',
+} as const;
+
+export interface StudioAssetInput {
+  /** @nullable */
+  episodeId?: number | null;
+  /** @nullable */
+  sceneId?: number | null;
+  /** @nullable */
+  characterId?: number | null;
+  kind: StudioAssetInputKind;
+  /** @minLength 1 */
+  objectPath: string;
+  /** @minLength 1 */
+  name: string;
+  /** @minLength 1 */
+  contentType: string;
 }
 
 export interface AiScenePrompt {
@@ -207,4 +291,12 @@ export interface ShotGenerationInput {
   /** @nullable */
   provider?: string | null;
 }
+
+export type BeginBrowserLoginParams = {
+returnTo?: string;
+};
+
+export type LogoutBrowserSessionParams = {
+returnTo?: string;
+};
 

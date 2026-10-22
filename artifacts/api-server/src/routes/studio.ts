@@ -5,6 +5,8 @@ import {
   CheckSceneContentResponse,
   CreateStudioCharacterBody,
   CreateStudioCharacterResponse,
+  CreateStudioAssetBody,
+  CreateStudioAssetResponse,
   GenerateDirectorNotesBody,
   GenerateDirectorNotesResponse,
   GenerateSceneDraftBody,
@@ -28,6 +30,7 @@ import {
   studioProjectsTable,
   studioScenesTable,
   studioShotsTable,
+  studioAssetsTable,
 } from "@workspace/db";
 import { generateGeminiJson, generateGeminiText } from "../lib/ai";
 import { submitVideoGeneration } from "../lib/video-provider";
@@ -216,6 +219,10 @@ router.get("/studio/bootstrap", async (req, res): Promise<void> => {
     .select()
     .from(studioClipsTable)
     .orderBy(asc(studioClipsTable.createdAt));
+  const assets = await db
+    .select()
+    .from(studioAssetsTable)
+    .orderBy(asc(studioAssetsTable.createdAt));
 
   req.log.info(
     { projectId: project?.id, episodeCount: episodes.length },
@@ -229,8 +236,39 @@ router.get("/studio/bootstrap", async (req, res): Promise<void> => {
       characters,
       shots,
       clips,
+      assets,
     }),
   );
+});
+
+router.post("/studio/assets", async (req, res): Promise<void> => {
+  if (!req.isAuthenticated()) {
+    res.status(401).json({ error: "Sign in to save reference images" });
+    return;
+  }
+  const parsed = CreateStudioAssetBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+  if (!parsed.data.objectPath.startsWith("/objects/")) {
+    res.status(400).json({ error: "Invalid App Storage object path" });
+    return;
+  }
+  if (!parsed.data.contentType.startsWith("image/")) {
+    res.status(400).json({ error: "Reference assets must be images" });
+    return;
+  }
+  const [project] = await db.select().from(studioProjectsTable).limit(1);
+  if (!project) {
+    res.status(404).json({ error: "Studio project not found" });
+    return;
+  }
+  const [asset] = await db
+    .insert(studioAssetsTable)
+    .values({ ...parsed.data, projectId: project.id })
+    .returning();
+  res.status(201).json(CreateStudioAssetResponse.parse(asset));
 });
 
 router.patch("/studio/project", async (req, res): Promise<void> => {
