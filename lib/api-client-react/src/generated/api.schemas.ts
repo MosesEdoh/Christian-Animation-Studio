@@ -143,6 +143,7 @@ export interface SceneInput {
   heading: string;
   synopsis: string;
   content: string;
+  duration?: string;
 }
 
 export interface SceneUpdate {
@@ -150,6 +151,7 @@ export interface SceneUpdate {
   heading?: string;
   synopsis?: string;
   content?: string;
+  duration?: string;
 }
 
 export type ShotStatus = typeof ShotStatus[keyof typeof ShotStatus];
@@ -202,6 +204,25 @@ export interface ShotOrderInput {
   sceneId: number;
   /** @minItems 1 */
   shotIds: number[];
+}
+
+export type EpisodeCompletionInputAgeBand = typeof EpisodeCompletionInputAgeBand[keyof typeof EpisodeCompletionInputAgeBand];
+
+
+export const EpisodeCompletionInputAgeBand = {
+  '5-8': '5-8',
+  '9-12': '9-12',
+  '13-17': '13-17',
+} as const;
+
+export interface EpisodeCompletionInput {
+  ageBand: EpisodeCompletionInputAgeBand;
+}
+
+export interface EpisodeCompletionResponse {
+  episodeId: number;
+  scenes: Scene[];
+  shots: Shot[];
 }
 
 export type ClipStatus = typeof ClipStatus[keyof typeof ClipStatus];

@@ -32,6 +32,8 @@ import type {
   CharacterUpdate,
   Clip,
   ContentCheckResult,
+  EpisodeCompletionInput,
+  EpisodeCompletionResponse,
   ErrorEnvelope,
   FaithQuestionInput,
   FaithQuestionStory,
@@ -1440,6 +1442,95 @@ export const useReorderStudioShots = <TError = ErrorType<unknown>,
         TContext
       > => {
       return useMutation(getReorderStudioShotsMutationOptions(options));
+    }
+
+export const getCompleteStudioEpisodeUrl = (id: number,) => {
+
+
+
+
+  return `/api/studio/episodes/${id}/complete`
+}
+
+/**
+ * @summary Generate and save a complete episode script and storyboard
+ */
+export const completeStudioEpisode = async (id: number,
+    episodeCompletionInput: EpisodeCompletionInput, options?: Parameters<typeof customFetch>[1]): Promise<EpisodeCompletionResponse> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<EpisodeCompletionResponse>(getCompleteStudioEpisodeUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(episodeCompletionInput)
+  }
+);}
+
+
+
+
+
+export const getCompleteStudioEpisodeMutationKey = () => ['completeStudioEpisode'] as const;
+
+export const getCompleteStudioEpisodeMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof completeStudioEpisode>>, TError,CompleteStudioEpisodeMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof completeStudioEpisode>>, TError,CompleteStudioEpisodeMutationVariables, TContext> => {
+
+const mutationKey = getCompleteStudioEpisodeMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof completeStudioEpisode>>, CompleteStudioEpisodeMutationVariables> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  completeStudioEpisode(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CompleteStudioEpisodeMutationResult = NonNullable<Awaited<ReturnType<typeof completeStudioEpisode>>>
+    export type CompleteStudioEpisodeMutationBody = BodyType<EpisodeCompletionInput>
+    export type CompleteStudioEpisodeMutationError = ErrorType<unknown>
+    export type CompleteStudioEpisodeMutationVariables = {id: number;data: BodyType<EpisodeCompletionInput>}
+
+    /**
+ * @summary Generate and save a complete episode script and storyboard
+ */
+export const useCompleteStudioEpisode = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof completeStudioEpisode>>, TError,CompleteStudioEpisodeMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof completeStudioEpisode>>,
+        TError,
+        CompleteStudioEpisodeMutationVariables,
+        TContext
+      > => {
+      return useMutation(getCompleteStudioEpisodeMutationOptions(options));
     }
 
 export const getGenerateSceneDraftUrl = () => {

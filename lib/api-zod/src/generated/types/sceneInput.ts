@@ -12,4 +12,5 @@ export interface SceneInput {
   heading: string;
   synopsis: string;
   content: string;
+  duration?: string;
 }

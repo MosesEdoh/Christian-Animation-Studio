@@ -249,6 +249,7 @@ function StudioWorkspace() {
   const [selectedShotId, setSelectedShotId] = useState<number | null>(null);
   const [sceneHeading, setSceneHeading] = useState('');
   const [sceneSynopsis, setSceneSynopsis] = useState('');
+  const [sceneDuration, setSceneDuration] = useState('');
   const [sceneContent, setSceneContent] = useState('');
   const [draftTone, setDraftTone] = useState('Brave, warm, and lightly comic');
   const [directorBeat, setDirectorBeat] = useState('');
@@ -334,6 +335,7 @@ function StudioWorkspace() {
     activeScene &&
       (sceneHeading !== activeScene.heading ||
         sceneSynopsis !== activeScene.synopsis ||
+        sceneDuration !== activeScene.duration ||
         sceneContent !== activeScene.content),
   );
   const sceneShots = useMemo(
@@ -365,6 +367,7 @@ function StudioWorkspace() {
       setSelectedSceneId(activeScene.id);
       setSceneHeading(activeScene.heading);
       setSceneSynopsis(activeScene.synopsis);
+      setSceneDuration(activeScene.duration);
       setSceneContent(activeScene.content);
       setDirectorBeat(activeScene.synopsis);
       setShotBeat(activeScene.synopsis);
@@ -406,6 +409,7 @@ function StudioWorkspace() {
         data: {
           heading: sceneHeading,
           synopsis: sceneSynopsis,
+          duration: sceneDuration,
           content: sceneContent,
         },
       },
@@ -459,6 +463,7 @@ function StudioWorkspace() {
             heading: 'INT. NEW SCENE - DAY',
             synopsis: '',
             content: '',
+            duration: '01:45',
           },
         },
         {
@@ -805,6 +810,8 @@ function StudioWorkspace() {
             setSceneHeading={setSceneHeading}
             sceneSynopsis={sceneSynopsis}
             setSceneSynopsis={setSceneSynopsis}
+            sceneDuration={sceneDuration}
+            setSceneDuration={setSceneDuration}
             sceneContent={sceneContent}
             setSceneContent={setSceneContent}
             sceneHasUnsavedChanges={sceneHasUnsavedChanges}
@@ -1253,6 +1260,8 @@ function ScriptStudio({
   setSceneHeading,
   sceneSynopsis,
   setSceneSynopsis,
+  sceneDuration,
+  setSceneDuration,
   sceneContent,
   setSceneContent,
   sceneHasUnsavedChanges,
@@ -1288,6 +1297,8 @@ function ScriptStudio({
   setSceneHeading: (value: string) => void;
   sceneSynopsis: string;
   setSceneSynopsis: (value: string) => void;
+  sceneDuration: string;
+  setSceneDuration: (value: string) => void;
   sceneContent: string;
   setSceneContent: (value: string) => void;
   sceneHasUnsavedChanges: boolean;
@@ -1335,7 +1346,8 @@ function ScriptStudio({
                 </div>
               </div>
               <div className="form-grid" style={{ marginTop: 17 }}>
-                <div className="field full"><label htmlFor="scene-heading">Scene heading</label><input id="scene-heading" value={sceneHeading} onChange={(event) => setSceneHeading(event.target.value)} data-testid="input-scene-heading" maxLength={180} /></div>
+                <div className="field"><label htmlFor="scene-heading">Scene heading</label><input id="scene-heading" value={sceneHeading} onChange={(event) => setSceneHeading(event.target.value)} data-testid="input-scene-heading" maxLength={180} /></div>
+                <div className="field"><label htmlFor="scene-duration">Screen time (mm:ss)</label><input id="scene-duration" value={sceneDuration} onChange={(event) => setSceneDuration(event.target.value)} data-testid="input-scene-duration" placeholder="01:45" maxLength={8} /></div>
                 <div className="field full"><label htmlFor="scene-synopsis">Scene intention</label><textarea id="scene-synopsis" value={sceneSynopsis} onChange={(event) => setSceneSynopsis(event.target.value)} data-testid="input-scene-synopsis" maxLength={1000} /></div>
               </div>
               <div className="script-paper">

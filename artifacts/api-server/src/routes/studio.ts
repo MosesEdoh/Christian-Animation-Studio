@@ -378,7 +378,7 @@ router.post("/studio/scenes", async (req, res): Promise<void> => {
       ...parsed.data,
       number: Number(sceneCount) + 1,
       status: "draft",
-      duration: "01:00",
+      duration: parsed.data.duration ?? "01:45",
     })
     .returning();
   res.status(201).json(CreateStudioSceneResponse.parse(scene));

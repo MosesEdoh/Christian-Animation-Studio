@@ -287,7 +287,8 @@ export const CreateStudioSceneBody = zod.object({
   "episodeId": zod.number().int(),
   "heading": zod.string().min(1),
   "synopsis": zod.string(),
-  "content": zod.string()
+  "content": zod.string(),
+  "duration": zod.string().optional()
 })
 
 export const CreateStudioSceneResponse = zod.object({
@@ -315,7 +316,8 @@ export const UpdateStudioSceneParams = zod.object({
 export const UpdateStudioSceneBody = zod.object({
   "heading": zod.string().min(1).optional(),
   "synopsis": zod.string().optional(),
-  "content": zod.string().optional()
+  "content": zod.string().optional(),
+  "duration": zod.string().optional()
 })
 
 export const UpdateStudioSceneResponse = zod.object({
@@ -420,6 +422,45 @@ export const ReorderStudioShotsResponseItem = zod.object({
   "status": zod.enum(['planned', 'queued', 'generating', 'ready'])
 })
 export const ReorderStudioShotsResponse = zod.array(ReorderStudioShotsResponseItem)
+
+
+/**
+ * @summary Generate and save a complete episode script and storyboard
+ */
+export const CompleteStudioEpisodeParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const CompleteStudioEpisodeBody = zod.object({
+  "ageBand": zod.enum(['5-8', '9-12', '13-17'])
+})
+
+export const CompleteStudioEpisodeResponse = zod.object({
+  "episodeId": zod.number().int(),
+  "scenes": zod.array(zod.object({
+  "id": zod.number().int(),
+  "episodeId": zod.number().int(),
+  "number": zod.number().int(),
+  "heading": zod.string(),
+  "synopsis": zod.string(),
+  "content": zod.string(),
+  "status": zod.enum(['draft', 'review', 'locked']),
+  "duration": zod.string()
+})),
+  "shots": zod.array(zod.object({
+  "id": zod.number().int(),
+  "sceneId": zod.number().int(),
+  "number": zod.number().int(),
+  "description": zod.string(),
+  "shotType": zod.string(),
+  "movement": zod.string(),
+  "angle": zod.string(),
+  "beat": zod.string(),
+  "duration": zod.string(),
+  "referenceImageUrl": zod.string().nullable(),
+  "status": zod.enum(['planned', 'queued', 'generating', 'ready'])
+}))
+})
 
 
 /**

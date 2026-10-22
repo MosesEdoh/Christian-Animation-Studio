@@ -11,4 +11,5 @@ export interface SceneUpdate {
   heading?: string;
   synopsis?: string;
   content?: string;
+  duration?: string;
 }
