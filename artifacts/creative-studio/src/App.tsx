@@ -35,6 +35,7 @@ import {
 import {
   getGetStudioBootstrapQueryKey,
   useCheckSceneContent,
+  useCompleteStudioEpisode,
   useCreateStudioCharacter,
   useCreateStudioScene,
   useCreateStudioShot,
@@ -281,6 +282,7 @@ function StudioWorkspace() {
   const createCharacter = useCreateStudioCharacter();
   const updateCharacter = useUpdateStudioCharacter();
   const createScene = useCreateStudioScene();
+  const completeEpisode = useCompleteStudioEpisode();
   const updateScene = useUpdateStudioScene();
   const createShot = useCreateStudioShot();
   const updateShot = useUpdateStudioShot();
@@ -481,6 +483,56 @@ function StudioWorkspace() {
       persistActiveScene(create, 'Current script saved before adding a scene.');
     } else {
       create();
+    }
+  };
+
+  const completeActiveEpisode = () => {
+    if (!activeEpisode || completeEpisode.isPending) return;
+    if (
+      episodeScenes.length > 0 &&
+      !window.confirm(
+        'Generate a complete six-scene script and storyboard for this episode? Existing scene text and the first four storyboard cards per scene will be replaced. Character references and storyboard reference images will be kept.',
+      )
+    ) {
+      return;
+    }
+
+    const runCompletion = () => {
+      completeEpisode.mutate(
+        {
+          id: activeEpisode.id,
+          data: { ageBand: faithAgeBand },
+        },
+        {
+          onSuccess: (result) => {
+            const replacedSceneIds = new Set(result.scenes.map((scene) => scene.id));
+            patchBootstrap((current) => ({
+              ...current,
+              scenes: [
+                ...current.scenes.filter(
+                  (scene) => scene.episodeId !== result.episodeId || scene.number > 6,
+                ),
+                ...result.scenes,
+              ],
+              shots: [
+                ...current.shots.filter((shot) => !replacedSceneIds.has(shot.sceneId)),
+                ...result.shots,
+              ],
+            }));
+            setSelectedSceneId(result.scenes[0]?.id ?? null);
+            setView('script');
+            notify(`Episode script completed with ${result.scenes.length} scenes and ${result.shots.length} storyboard cards. References were kept.`);
+          },
+          onError: () =>
+            notify('The full episode could not be generated. Existing scenes and references are unchanged.', 'error'),
+        },
+      );
+    };
+
+    if (sceneHasUnsavedChanges) {
+      persistActiveScene(runCompletion, 'Current scene saved before completing the episode.');
+    } else {
+      runCompletion();
     }
   };
 
@@ -806,6 +858,8 @@ function StudioWorkspace() {
             setSelectedSceneId={selectSceneSafely}
             onAddScene={addScene}
             creatingScenePending={createScene.isPending}
+            onCompleteEpisode={completeActiveEpisode}
+            completingEpisodePending={completeEpisode.isPending}
             sceneHeading={sceneHeading}
             setSceneHeading={setSceneHeading}
             sceneSynopsis={sceneSynopsis}
@@ -1256,6 +1310,8 @@ function ScriptStudio({
   setSelectedSceneId,
   onAddScene,
   creatingScenePending,
+  onCompleteEpisode,
+  completingEpisodePending,
   sceneHeading,
   setSceneHeading,
   sceneSynopsis,
@@ -1293,6 +1349,8 @@ function ScriptStudio({
   setSelectedSceneId: (id: number) => void;
   onAddScene: () => void;
   creatingScenePending: boolean;
+  onCompleteEpisode: () => void;
+  completingEpisodePending: boolean;
   sceneHeading: string;
   setSceneHeading: (value: string) => void;
   sceneSynopsis: string;
@@ -1328,6 +1386,7 @@ function ScriptStudio({
       <div className="page-intro">
         <div><p className="eyebrow">01 / story department</p><h1 className="page-title">Put the <span className="display-script">heart</span> on the page.</h1><p className="page-subtitle">Write in plain language. Make the courage specific. Let the lesson arrive through the action.</p></div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 9, flexWrap: 'wrap' }}>
+          <button type="button" className="btn btn-sun" onClick={onCompleteEpisode} disabled={creatingScenePending || completingEpisodePending || !activeEpisode} data-testid="button-complete-episode"><WandSparkles size={14} /> {completingEpisodePending ? 'Completing episode…' : 'Complete episode'}</button>
           <button type="button" className="btn btn-quiet" onClick={onAddScene} disabled={creatingScenePending || !activeEpisode} data-testid="button-add-scene"><Plus size={14} /> {creatingScenePending ? 'Adding…' : 'New scene'}</button>
           <span className="status-pill"><FileText size={13} /> {activeEpisode ? `Episode ${activeEpisode.number} · ${activeEpisode.title}` : 'No episode selected'}</span>
         </div>

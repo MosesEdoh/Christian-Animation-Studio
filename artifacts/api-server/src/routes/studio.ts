@@ -3,6 +3,9 @@ import { asc, count, eq } from "drizzle-orm";
 import {
   CheckSceneContentBody,
   CheckSceneContentResponse,
+  CompleteStudioEpisodeBody,
+  CompleteStudioEpisodeParams,
+  CompleteStudioEpisodeResponse,
   CreateStudioCharacterBody,
   CreateStudioCharacterResponse,
   CreateStudioAssetBody,
@@ -50,6 +53,69 @@ import { generateGeminiJson, generateGeminiText } from "../lib/ai";
 import { submitVideoGeneration } from "../lib/video-provider";
 
 const router: IRouter = Router();
+
+type EpisodePackageDraft = {
+  scenes: Array<{
+    number: number;
+    heading: string;
+    synopsis: string;
+    content: string;
+    shots: Array<{
+      description: string;
+      shotType: string;
+      movement: string;
+      angle: string;
+      beat: string;
+    }>;
+  }>;
+};
+
+function parseEpisodePackageDraft(value: unknown): EpisodePackageDraft | null {
+  const isRecord = (item: unknown): item is Record<string, unknown> =>
+    item !== null && typeof item === "object" && !Array.isArray(item);
+  const readString = (
+    item: unknown,
+    maxLength: number,
+  ): string | null => {
+    if (typeof item !== "string") return null;
+    const trimmed = item.trim();
+    return trimmed.length > 0 && trimmed.length <= maxLength ? trimmed : null;
+  };
+
+  if (!isRecord(value) || !Array.isArray(value.scenes) || value.scenes.length !== 6) {
+    return null;
+  }
+  const scenes: EpisodePackageDraft["scenes"] = [];
+  for (const [index, rawScene] of value.scenes.entries()) {
+    if (!isRecord(rawScene) || rawScene.number !== index + 1 || !Array.isArray(rawScene.shots) || rawScene.shots.length !== 4) {
+      return null;
+    }
+    const heading = readString(rawScene.heading, 180);
+    const synopsis = readString(rawScene.synopsis, 1000);
+    const content = readString(rawScene.content, 20000);
+    if (!heading || !synopsis || !content) return null;
+
+    const shots: EpisodePackageDraft["scenes"][number]["shots"] = [];
+    for (const rawShot of rawScene.shots) {
+      if (!isRecord(rawShot)) return null;
+      const description = readString(rawShot.description, 1000);
+      const shotType = readString(rawShot.shotType, 120);
+      const movement = readString(rawShot.movement, 120);
+      const angle = readString(rawShot.angle, 120);
+      const beat = readString(rawShot.beat, 500);
+      if (!description || !shotType || !movement || !angle || !beat) return null;
+      shots.push({ description, shotType, movement, angle, beat });
+    }
+    scenes.push({
+      number: index + 1,
+      heading,
+      synopsis,
+      content,
+      shots,
+    });
+  }
+  return { scenes };
+}
 
 async function ensureStudioSeed(): Promise<void> {
   const [{ value: projectCount }] = await db
@@ -407,6 +473,198 @@ router.patch("/studio/scenes/:id", async (req, res): Promise<void> => {
   res.json(UpdateStudioSceneResponse.parse(scene));
 });
 
+router.post("/studio/episodes/:id/complete", async (req, res): Promise<void> => {
+  const params = CompleteStudioEpisodeParams.safeParse(req.params);
+  const parsed = CompleteStudioEpisodeBody.safeParse(req.body);
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+
+  const [episode] = await db
+    .select()
+    .from(studioEpisodesTable)
+    .where(eq(studioEpisodesTable.id, params.data.id));
+  if (!episode) {
+    res.status(404).json({ error: "Episode not found" });
+    return;
+  }
+
+  const [project] = await db
+    .select()
+    .from(studioProjectsTable)
+    .where(eq(studioProjectsTable.id, episode.projectId));
+  const existingScenes = await db
+    .select()
+    .from(studioScenesTable)
+    .where(eq(studioScenesTable.episodeId, episode.id))
+    .orderBy(asc(studioScenesTable.number));
+  const characters = await db
+    .select()
+    .from(studioCharactersTable)
+    .where(eq(studioCharactersTable.projectId, episode.projectId));
+
+  const faithFocus: Record<number, string> = {
+    1: "The hidden question is: Does God hear me when I am scared and cannot find the right words? Ground the story in Psalm 34:18 and Psalm 56:3. Fear may remain, but the child is not alone and can ask safe people for help.",
+    2: "The hidden question is: If I make a mistake and hide it, can God still love me? Ground the story in Luke 15:11–32 and John 21:15–17. Pair forgiveness with honesty, repair, accountability, and reasonable consequences; do not imply that forgiveness erases harm or requires unsafe contact.",
+    3: "The hidden questions are: If God is with me, why do I still feel lonely? Is it okay to have doubts? Ground the story in Psalm 34:18, Mark 9:24, and Romans 12:15. Do not promise that prayer removes loneliness; show listening, community, and practical support.",
+  };
+  const currentDrafts = existingScenes
+    .map(
+      (scene) =>
+        `Scene ${scene.number}: ${scene.heading}\nIntention: ${scene.synopsis}\nExisting draft to preserve and thoughtfully expand:\n${scene.content.slice(0, 4500)}`,
+    )
+    .join("\n\n");
+
+  try {
+    const rawPackage = await generateGeminiJson<unknown>(
+      `Write a complete six-scene screenplay and storyboard package for this animated series episode.
+
+Series: ${project?.title ?? "The Lightbearer"}
+Episode ${episode.number}: ${episode.title}
+Episode summary: ${episode.summary}
+Target child age band: ${parsed.data.ageBand}
+Episode runtime: ${episode.duration}
+Faith focus: ${faithFocus[episode.number] ?? "Explore a sincere child-sized question through Bible-grounded Christian hope, humility, compassion, and practical care."}
+
+Characters:
+${characters.map((character) => `- ${character.name} (${character.role}): ${character.personality}; arc: ${character.arc}; faith: ${character.faithLesson}`).join("\n")}
+
+Continuity notes:
+- Mara is observant, protective, and uses nervous humor.
+- Jonah is patient and inventive, but is learning to accept help.
+- Eli is a curious new student who sometimes feels afraid.
+- Ms. Ada is a trusted school/community mentor who offers practical, non-coercive help.
+- The Hush is a nonviolent visual metaphor for isolation and fear. It can dim or distort light, but must not become graphic or physically harm children.
+- Keep the adventure hopeful without making fear, doubt, illness, loneliness, or hardship a sign of weak faith.
+- Children may ask difficult questions without being mocked, shamed, rushed, or told to keep unsafe secrets. A trusted safe adult can help; never imply that every adult is safe.
+- Never depict children handling cracked glass or sharp debris, touching exposed wiring, using fuel or generators, or operating power tools. A safe adult manages hazards, and children can choose a low-risk alternative.
+- Keep Bible references accurate and distinguish the text from interpretations Christians may differ on.
+- Avoid preaching, simplistic answers, guaranteed outcomes, gore, and frightening detail.
+
+Existing scenes to preserve and expand (if any):
+${currentDrafts || "No existing scenes. Create a coherent six-scene episode from the episode summary and faith focus."}
+
+Return valid JSON only, with exactly one top-level key "scenes". It must contain exactly six scene objects numbered 1 through 6 in order. Each scene object must have:
+- number (integer)
+- heading (INT./EXT. screenplay slugline)
+- synopsis (one-sentence dramatic intention)
+- content (a complete screenplay scene with action lines and dialogue, approximately 180–260 words; give each scene a clear dramatic turn and a playable ending)
+- shots (exactly four storyboard cards, each with description, shotType, movement, angle, and beat)
+
+Make the six scenes form one complete episode with a beginning, escalation, choice, repair/support, and satisfying but not simplistic ending. For Episode 1, preserve the existing hallway moment where Mara helps a frightened first-year and the chapel-light discovery where the glow steadies when the friends act together. Use the faith focus naturally in character dialogue and choices.`,
+    );
+    const draft = parseEpisodePackageDraft(rawPackage);
+    if (!draft) {
+      req.log.warn(
+        { episodeId: episode.id },
+        "Episode package did not meet the expected format",
+      );
+      res.status(502).json({ error: "The episode draft was incomplete or malformed; nothing was saved" });
+      return;
+    }
+
+    const sceneDurations =
+      episode.number === 1
+        ? ["01:55", "01:55", "01:55", "01:55", "01:55", "01:55"]
+        : episode.number === 2
+          ? ["02:00", "02:00", "02:00", "02:00", "02:00", "02:00"]
+          : ["02:00", "02:00", "02:00", "02:00", "02:00", "01:45"];
+
+    const savedPackage = await db.transaction(async (tx) => {
+      const savedScenes: Array<typeof studioScenesTable.$inferSelect> = [];
+      const savedShots: Array<typeof studioShotsTable.$inferSelect> = [];
+      const episodeScenes = await tx
+        .select()
+        .from(studioScenesTable)
+        .where(eq(studioScenesTable.episodeId, episode.id));
+      for (const [index, sceneDraft] of draft.scenes.entries()) {
+        const existingScene = episodeScenes.find(
+          (scene) => scene.number === sceneDraft.number,
+        );
+
+        const [scene] = existingScene
+          ? await tx
+              .update(studioScenesTable)
+              .set({
+                heading: sceneDraft.heading,
+                synopsis: sceneDraft.synopsis,
+                content: sceneDraft.content,
+                duration: sceneDurations[index],
+              })
+              .where(eq(studioScenesTable.id, existingScene.id))
+              .returning()
+          : await tx
+              .insert(studioScenesTable)
+              .values({
+                episodeId: episode.id,
+                number: sceneDraft.number,
+                heading: sceneDraft.heading,
+                synopsis: sceneDraft.synopsis,
+                content: sceneDraft.content,
+                status: "draft",
+                duration: sceneDurations[index],
+              })
+              .returning();
+        savedScenes.push(scene);
+
+        const existingShots = await tx
+          .select()
+          .from(studioShotsTable)
+          .where(eq(studioShotsTable.sceneId, scene.id))
+          .orderBy(asc(studioShotsTable.number));
+        const existingShotsByNumber = new Map(
+          existingShots.map((shot) => [shot.number, shot]),
+        );
+        for (const [shotIndex, shotDraft] of sceneDraft.shots.entries()) {
+          const shotValues = {
+            number: shotIndex + 1,
+            description: shotDraft.description,
+            shotType: shotDraft.shotType,
+            movement: shotDraft.movement,
+            angle: shotDraft.angle,
+            beat: shotDraft.beat,
+            duration: shotIndex === 3 ? "00:05" : "00:04",
+          };
+          const existingShot = existingShotsByNumber.get(shotIndex + 1);
+          const [shot] = existingShot
+            ? await tx
+                .update(studioShotsTable)
+                .set(shotValues)
+                .where(eq(studioShotsTable.id, existingShot.id))
+                .returning()
+            : await tx
+                .insert(studioShotsTable)
+                .values({
+                  sceneId: scene.id,
+                  ...shotValues,
+                  referenceImageUrl: null,
+                  status: "planned",
+                })
+                .returning();
+          savedShots.push(shot);
+        }
+        savedShots.push(...existingShots.filter((shot) => shot.number > 4));
+      }
+      return { scenes: savedScenes, shots: savedShots };
+    });
+
+    res.json(
+      CompleteStudioEpisodeResponse.parse({
+        episodeId: episode.id,
+        ...savedPackage,
+      }),
+    );
+  } catch (error) {
+    req.log.error({ err: error, episodeId: episode.id }, "Episode package generation failed");
+    res.status(502).json({ error: "The episode script and storyboard could not be completed" });
+  }
+});
+
 router.post("/studio/shots", async (req, res): Promise<void> => {
   const parsed = CreateStudioShotBody.safeParse(req.body);
   if (!parsed.success) {
@@ -502,7 +760,7 @@ router.post("/studio/ai/draft", async (req, res): Promise<void> => {
   }
   try {
     const text = await generateGeminiText(
-      `You are a Bible-grounded Christian animated action-series screenwriter. Write a screenplay-format scene draft for viewers ages 5-17. Keep the action exciting but non-graphic, let faith emerge through honest questions and character choices rather than preaching, and avoid profanity, gore, shame, and dehumanizing language. Do not imply that suffering or danger is caused by a child's lack of faith. When the story touches harm or danger, make space for help from a trusted safe adult rather than secrecy. Do not present a disputed interpretation as if every Christian agrees.
+      `You are a Bible-grounded Christian animated action-series screenwriter. Write a screenplay-format scene draft for viewers ages 5-17. Keep the action exciting but non-graphic, let faith emerge through honest questions and character choices rather than preaching, and avoid profanity, gore, shame, and dehumanizing language. Do not imply that suffering or danger is caused by a child's lack of faith. When the story touches harm or danger, make space for help from a trusted safe adult rather than secrecy. Never depict children handling cracked glass or sharp debris, touching exposed wiring, using fuel or generators, or operating power tools; a safe adult manages hazards and children can choose a low-risk alternative. Do not present a disputed interpretation as if every Christian agrees.
 
 Scene premise: ${parsed.data.premise}
 Characters: ${parsed.data.characters}
@@ -582,7 +840,7 @@ router.post("/studio/ai/shot-suggestions", async (req, res): Promise<void> => {
         duration: string;
       }>
     >(
-      `Suggest 4 cinematic but readable animation shots for a Christian action series for ages 5-17. Keep action non-graphic and visually clear. Return a JSON array only. Each item must have shotType, movement, angle, rationale, and duration. Scene: ${parsed.data.scene}. Emotional beat: ${parsed.data.emotionalBeat}.`,
+      `Suggest 4 cinematic but readable animation shots for a Christian action series for ages 5-17. Keep action non-graphic and visually clear. Do not frame children handling cracked glass, exposed wiring, generators, fuel, or power tools; show a trusted adult managing hazards or a safe alternative. Return a JSON array only. Each item must have shotType, movement, angle, rationale, and duration. Scene: ${parsed.data.scene}. Emotional beat: ${parsed.data.emotionalBeat}.`,
     );
     res.json(SuggestShotsResponse.parse(result));
   } catch (error) {

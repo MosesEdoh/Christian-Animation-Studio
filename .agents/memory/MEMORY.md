@@ -1,1 +1,1 @@
-- [Gemini model availability](gemini-model-availability.md) — direct Gemini keys may reject older model IDs; keep the model configurable and default to the currently accepted model.
+- [Gemini model availability](gemini-model-availability.md) — keep the model configurable and pace free-tier generation to avoid per-minute 429s.
