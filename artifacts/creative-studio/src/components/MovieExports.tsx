@@ -1,10 +1,12 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { getPreflightStudioExportQueryKey, preflightStudioExport, usePreflightStudioExport, useCancelStudioExport, useCreateStudioExport, useDeleteStudioExport, getListStudioExportsQueryKey, type Episode, type StudioExport } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { updateMovieExportCaches, useMovieExportHistory } from '../hooks/useMovieExportHistory';
 import { movieSizeLabel } from '../lib/movieSize';
+import { trackEvent } from '../lib/analytics';
 
 type MovieFormat = { aspectRatio: '16:9' | '9:16'; quality: '720p' | '1080p' };
+type PreflightOutcome = 'passed' | 'blocked' | 'unavailable';
 type MovieBatch = {
   episodeId: number | null;
   label: string;
@@ -23,6 +25,8 @@ export function MovieExports({ episodes }: { episodes: Episode[] }) {
   const [queueing, setQueueing] = useState(false);
   const [batch, setBatch] = useState<MovieBatch | null>(null);
   const queueLock = useRef(false);
+  const seriesPreflight = useRef<PreflightOutcome | 'unchecked'>('unchecked');
+  const lastEstimateEvent = useRef('');
   const estimateParams = {
     ...(episodeId === 'series' ? {} : { episodeId: Number(episodeId) }),
     aspectRatio,
@@ -31,6 +35,30 @@ export function MovieExports({ episodes }: { episodes: Episode[] }) {
     queryKey: getPreflightStudioExportQueryKey(estimateParams),
     staleTime: 0, refetchInterval: 30_000, retry: false,
   } });
+  const estimateOutcome: PreflightOutcome | null = estimate.isError ? 'unavailable'
+    : estimate.isPending || !estimate.data ? null : estimate.data.canQueue ? 'passed' : 'blocked';
+  useEffect(() => {
+    if (!estimateOutcome) return;
+    // Polling and unrelated renders must not inflate warning exposure counts.
+    // The local key distinguishes selections but is never sent to analytics.
+    const key = `${episodeId}:${aspectRatio}:${estimateOutcome}`;
+    if (lastEstimateEvent.current === key) return;
+    lastEstimateEvent.current = key;
+    if (episodeId === 'series') seriesPreflight.current = estimateOutcome;
+    trackEvent('movie_preflight_outcome', {
+      source: 'estimate', target: episodeId === 'series' ? 'series' : 'episode',
+      aspect_ratio: aspectRatio, outcome: estimateOutcome,
+    });
+  }, [episodeId, aspectRatio, estimateOutcome]);
+
+  function selectEpisode(value: string) {
+    if (episodeId === 'series' && value !== 'series') {
+      trackEvent('movie_episode_selected', {
+        preceding_series_preflight: seriesPreflight.current,
+      });
+    }
+    setEpisodeId(value);
+  }
   const jobs = useMovieExportHistory();
   const create = useCreateStudioExport();
   const cancel = useCancelStudioExport();
@@ -75,6 +103,8 @@ export function MovieExports({ episodes }: { episodes: Episode[] }) {
     setQueueing(true);
     setError('');
     const targetId = resume ? resume.episodeId : retry ? retry.episodeId : episodeId === 'series' ? null : Number(episodeId);
+    const requestMode = resume ? 'missing_formats' : retry ? 'retry' : all ? 'all_formats' : 'single';
+    const precedingSeriesPreflight = seriesPreflight.current;
     const formats = resume ? resume.remaining : retry ? [{ aspectRatio: retry.aspectRatio, quality: retry.quality }] : all
       ? (['16:9', '9:16'] as const).flatMap(ratio => (['720p', '1080p'] as const).map(size => ({ aspectRatio: ratio, quality: size })))
       : [{ aspectRatio, quality }];
@@ -89,13 +119,35 @@ export function MovieExports({ episodes }: { episodes: Episode[] }) {
       // Refresh before queueing, including retries of a different selection.
       // Check every orientation before creating any of the batch's jobs.
       for (const ratio of new Set(formats.map(format => format.aspectRatio))) {
-        const check = await preflightStudioExport({
-          ...(targetId === null ? {} : { episodeId: targetId }), aspectRatio: ratio,
+        let check;
+        try {
+          check = await preflightStudioExport({
+            ...(targetId === null ? {} : { episodeId: targetId }), aspectRatio: ratio,
+          });
+        } catch (cause) {
+          if (targetId === null) seriesPreflight.current = 'unavailable';
+          trackEvent('movie_preflight_outcome', {
+            source: 'queue', target: targetId === null ? 'series' : 'episode',
+            aspect_ratio: ratio, outcome: 'unavailable', request_mode: requestMode,
+          });
+          throw cause;
+        }
+        const outcome = check.canQueue ? 'passed' : 'blocked';
+        if (targetId === null) seriesPreflight.current = outcome;
+        trackEvent('movie_preflight_outcome', {
+          source: 'queue', target: targetId === null ? 'series' : 'episode',
+          aspect_ratio: ratio, outcome, request_mode: requestMode,
         });
         if (!check.canQueue) { setError(check.message); return; }
       }
       for (const format of formats) {
         await create.mutateAsync({ data: { episodeId: targetId, ...format } });
+        trackEvent('movie_queue_succeeded', {
+          target: targetId === null ? 'series' : 'episode',
+          aspect_ratio: format.aspectRatio, quality: format.quality,
+          request_mode: requestMode,
+          preceding_series_preflight: precedingSeriesPreflight,
+        });
         queuedCount++;
         if (progress) {
           progress = { ...progress, queued: [...progress.queued, format], remaining: formats.slice(queuedCount) };
@@ -119,7 +171,7 @@ export function MovieExports({ episodes }: { episodes: Episode[] }) {
     <h2>Storyboard movies</h2>
     <p className="row-caption">Complete saved scripts and storyboard references, assembled into a silent MP4 with readable dialogue cards. These are review animatics—not finished character animation or narrated episodes.</p>
     <div className="form-grid" style={{ marginTop: 16 }}>
-      <div className="field"><label htmlFor="movie-episode">Episode or series</label><select id="movie-episode" value={episodeId} onChange={event => setEpisodeId(event.target.value)}><option value="series">Entire series · one MP4</option>{episodes.map(episode => <option key={episode.id} value={episode.id}>Episode {episode.number}: {episode.title}</option>)}</select></div>
+      <div className="field"><label htmlFor="movie-episode">Episode or series</label><select id="movie-episode" value={episodeId} onChange={event => selectEpisode(event.target.value)}><option value="series">Entire series · one MP4</option>{episodes.map(episode => <option key={episode.id} value={episode.id}>Episode {episode.number}: {episode.title}</option>)}</select></div>
       <div className="field"><label htmlFor="movie-ratio">Orientation</label><select id="movie-ratio" value={aspectRatio} onChange={event => setAspectRatio(event.target.value as '16:9' | '9:16')}><option>16:9</option><option>9:16</option></select></div>
       <div className="field"><label htmlFor="movie-quality">Resolution</label><select id="movie-quality" value={quality} onChange={event => setQuality(event.target.value as '720p' | '1080p')}><option>720p</option><option>1080p</option></select></div>
     </div>

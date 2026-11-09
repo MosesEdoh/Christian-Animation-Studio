@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import type { StudioExport, StudioExportInput } from '@workspace/api-client-react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MovieExports } from '../src/components/MovieExports';
 import { episode, otherEpisode } from './episodeFixtures';
 
@@ -92,6 +92,7 @@ const expectRefresh = async (invalidate: ReturnType<typeof mount>['invalidate'])
 };
 
 beforeEach(() => {
+  delete window.umami;
   api.jobs = [];
   api.listError = false;
   api.create.mockReset().mockResolvedValue(job());
@@ -99,6 +100,138 @@ beforeEach(() => {
   api.estimate = { canQueue: true, message: 'Entire series fits the card and playback limits for the saved scripts.', cards: 12, playbackSeconds: 90, cardLimit: 2000, playbackLimitSeconds: 21600 };
   api.preflight.mockReset().mockImplementation(async () => api.estimate);
   api.checking = api.estimateError = false;
+});
+
+afterEach(() => {
+  delete window.umami;
+});
+
+describe('MovieExports privacy-safe analytics', () => {
+  function tracker() {
+    const track = vi.fn();
+    window.umami = { track };
+    return track;
+  }
+
+  it.each(['passed', 'blocked', 'unavailable'] as const)('records %s estimates once, without private content', outcome => {
+    const track = tracker();
+    api.estimate.canQueue = outcome !== 'blocked';
+    api.estimateError = outcome === 'unavailable';
+    api.estimate.message = 'PRIVATE script title /reference/path user@example.com';
+    const view = mount();
+    view.refresh();
+    select('Resolution', '1080p');
+    expect(track.mock.calls).toEqual([['movie_preflight_outcome', {
+      source: 'estimate', target: 'series', aspect_ratio: '16:9', outcome,
+    }]]);
+  });
+
+  it('does not record loading as an outcome, but records outcome and orientation changes', () => {
+    const track = tracker();
+    api.checking = true;
+    const view = mount();
+    expect(track).not.toHaveBeenCalled();
+    api.checking = false;
+    view.refresh();
+    api.estimate = { ...api.estimate, canQueue: false };
+    view.refresh();
+    select('Orientation', '9:16');
+    expect(track.mock.calls.map(([, data]) => data)).toEqual([
+      { source: 'estimate', target: 'series', aspect_ratio: '16:9', outcome: 'passed' },
+      { source: 'estimate', target: 'series', aspect_ratio: '16:9', outcome: 'blocked' },
+      { source: 'estimate', target: 'series', aspect_ratio: '9:16', outcome: 'blocked' },
+    ]);
+  });
+
+  it.each(['blocked', 'unavailable', 'passed', 'unchecked'] as const)('attributes episode selection and queue success after %s series preflight', async outcome => {
+    const track = tracker();
+    api.estimate.canQueue = outcome !== 'blocked';
+    api.estimateError = outcome === 'unavailable';
+    api.checking = outcome === 'unchecked';
+    const { refresh, invalidate } = mount();
+    select('Episode or series', String(episode.id));
+    api.estimate = { ...api.estimate, canQueue: true };
+    api.estimateError = api.checking = false;
+    refresh();
+    // Choosing another episode is not another series-to-episode switch.
+    select('Episode or series', String(otherEpisode.id));
+    fireEvent.click(build());
+    await expectRefresh(invalidate);
+    expect(track.mock.calls.filter(([name]) => name === 'movie_episode_selected')).toEqual([
+      ['movie_episode_selected', { preceding_series_preflight: outcome }],
+    ]);
+    expect(track.mock.calls.filter(([name]) => name === 'movie_queue_succeeded')).toEqual([
+      ['movie_queue_succeeded', {
+        target: 'episode', aspect_ratio: '16:9', quality: '720p',
+        request_mode: 'single', preceding_series_preflight: outcome,
+      }],
+    ]);
+  });
+
+  it.each(['blocked', 'unavailable'] as const)('records fresh queue preflight %s separately from a passing displayed estimate', async outcome => {
+    const track = tracker();
+    if (outcome === 'blocked') api.preflight.mockResolvedValueOnce({ ...api.estimate, canQueue: false });
+    else api.preflight.mockRejectedValueOnce(new Error('PRIVATE response detail'));
+    mount();
+    fireEvent.click(build());
+    await waitFor(() => expect(build()).toBeEnabled());
+    expect(track).toHaveBeenCalledWith('movie_preflight_outcome', {
+      source: 'queue', target: 'series', aspect_ratio: '16:9',
+      outcome, request_mode: 'single',
+    });
+    select('Episode or series', String(episode.id));
+    expect(track).toHaveBeenCalledWith('movie_episode_selected', { preceding_series_preflight: outcome });
+    expect(track.mock.calls.some(([name]) => name === 'movie_queue_succeeded')).toBe(false);
+    expect(api.create).not.toHaveBeenCalled();
+  });
+
+  it('counts only confirmed requests in a partial batch and its missing-format retry', async () => {
+    const track = tracker();
+    api.create.mockResolvedValueOnce(job()).mockRejectedValueOnce(new Error('PRIVATE queue error'));
+    const { invalidate } = mount();
+    fireEvent.click(buildAll());
+    await expectRefresh(invalidate);
+    const successes = () => track.mock.calls.filter(([name]) => name === 'movie_queue_succeeded');
+    expect(successes()).toEqual([['movie_queue_succeeded', {
+      target: 'series', aspect_ratio: '16:9', quality: '720p',
+      request_mode: 'all_formats', preceding_series_preflight: 'passed',
+    }]]);
+    fireEvent.click(screen.getByRole('button', { name: 'Queue missing formats' }));
+    await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(2));
+    expect(successes()).toHaveLength(4);
+    expect(successes().slice(1).map(([, data]) => [data.aspect_ratio, data.quality, data.request_mode])).toEqual([
+      ['16:9', '1080p', 'missing_formats'],
+      ['9:16', '720p', 'missing_formats'],
+      ['9:16', '1080p', 'missing_formats'],
+    ]);
+    expect(JSON.stringify(track.mock.calls)).not.toContain('PRIVATE');
+  });
+
+  it('records a saved-job retry using its actual target and format, not the form', async () => {
+    const track = tracker();
+    api.jobs = [job({ status: 'failed', episodeId: episode.id, aspectRatio: '9:16', quality: '1080p' })];
+    const { invalidate } = mount();
+    fireEvent.click(screen.getByRole('button', { name: 'Build again' }));
+    await expectRefresh(invalidate);
+    expect(track).toHaveBeenCalledWith('movie_queue_succeeded', {
+      target: 'episode', aspect_ratio: '9:16', quality: '1080p',
+      request_mode: 'retry', preceding_series_preflight: 'passed',
+    });
+  });
+
+  it.each(['missing', 'throws', 'rejects'] as const)('keeps exports working when the tracker %s', async failure => {
+    if (failure !== 'missing') window.umami = { track: () => {
+      if (failure === 'throws') throw new Error('Tracker failed');
+      return Promise.reject(new Error('Tracker failed asynchronously'));
+    } };
+    const { invalidate } = mount();
+    select('Episode or series', String(episode.id));
+    fireEvent.click(buildAll());
+    await expectRefresh(invalidate);
+    expect(api.create).toHaveBeenCalledTimes(4);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(build()).toBeEnabled();
+  });
 });
 
 describe('MovieExports preflight', () => {
