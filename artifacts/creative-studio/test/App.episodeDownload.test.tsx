@@ -55,6 +55,59 @@ beforeEach(() => {
 });
 
 describe('signed-in dashboard series ZIP wiring', () => {
+  it.each(['resolve', 'reject'])('preserves packing across navigation and handles %s while away', async completion => {
+    const packing = deferred<void>();
+    const failureMessage = 'The series ZIP could not be packed.';
+    vi.mocked(downloadSeriesPackage).mockReturnValue(packing.promise);
+    render(<App />);
+    fireEvent.click(seriesControl());
+    expect(downloadSeriesPackage).toHaveBeenCalledExactlyOnceWith(state.data, expect.any(AbortSignal));
+    const signal = vi.mocked(downloadSeriesPackage).mock.calls[0][1]!;
+
+    fireEvent.click(screen.getByTestId('button-nav-script'));
+    expect(screen.getByTestId('view-script-studio')).toBeVisible();
+    expect(screen.queryByTestId('view-dashboard')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('button-export-series')).not.toBeInTheDocument();
+    expect(signal.aborted).toBe(false);
+
+    fireEvent.click(screen.getByTestId('button-nav-dashboard'));
+    expect(screen.getByTestId('view-dashboard')).toBeVisible();
+    expect(seriesControl()).toBeDisabled();
+    expect(seriesControl()).toHaveAccessibleName('Packing…');
+    fireEvent.click(seriesControl());
+    expect(downloadSeriesPackage).toHaveBeenCalledTimes(1);
+    expect(screen.queryByTestId('status-toast')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('button-nav-script'));
+    expect(screen.getByTestId('view-script-studio')).toBeVisible();
+    await act(async () => {
+      if (completion === 'resolve') packing.resolve();
+      else packing.reject(new Error(failureMessage));
+    });
+    expect(screen.getByTestId('view-script-studio')).toBeVisible();
+    expect(screen.queryByTestId('view-dashboard')).not.toBeInTheDocument();
+    const message = completion === 'resolve' ? seriesSuccess : failureMessage;
+    expect(screen.getByTestId('status-toast')).toHaveTextContent(message);
+
+    fireEvent.click(screen.getByTestId('button-nav-dashboard'));
+    expect(screen.getByTestId('view-dashboard')).toBeVisible();
+    expect(seriesControl()).toBeEnabled();
+    expect(seriesControl()).toHaveAccessibleName('Download series ZIP');
+    expect(screen.queryByRole('button', { name: 'Cancel ZIP export' })).not.toBeInTheDocument();
+    expect(screen.getByTestId('status-toast')).toHaveTextContent(message);
+    const toast = screen.getByText(message).closest('.toast');
+    if (completion === 'resolve') {
+      expect(toast).not.toHaveClass('error');
+      expect(screen.queryByText(failureMessage)).not.toBeInTheDocument();
+    } else {
+      expect(toast).toHaveClass('error');
+      expect(screen.queryByText(seriesSuccess)).not.toBeInTheDocument();
+    }
+    expect(signal.aborted).toBe(false);
+    expect(downloadSeriesPackage).toHaveBeenCalledTimes(1);
+    expect(downloadEpisodeVideo).not.toHaveBeenCalled();
+  });
+
   it.each(['resolve', 'reject'])('cancels ZIP independently and ignores a late %s during retry', async completion => {
     const cancelled = deferred<void>();
     const retry = deferred<void>();
