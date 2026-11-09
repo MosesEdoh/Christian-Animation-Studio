@@ -5,6 +5,8 @@ import App from '../src/App';
 import { downloadEpisodeVideo } from '../src/lib/episodeDownload';
 import { downloadSeriesPackage } from '../src/lib/seriesPackage';
 import { bootstrap, clip, episode, otherEpisode, shot } from './episodeFixtures';
+import { NodeZipWorker } from './nodeZipWorker';
+import { randomFillSync } from 'node:crypto';
 
 const state = vi.hoisted(() => ({ data: undefined as StudioBootstrap | undefined }));
 vi.mock('@clerk/react', () => ({
@@ -63,6 +65,55 @@ beforeEach(() => {
 });
 
 describe('signed-in dashboard series ZIP wiring', () => {
+  it('keeps navigation and Cancel responsive while a real worker packs a large ZIP', async () => {
+    const actual = await vi.importActual<typeof import('../src/lib/seriesPackage')>('../src/lib/seriesPackage');
+    const posted = deferred<NodeZipWorker>();
+    NodeZipWorker.instances = [];
+    vi.stubGlobal('Worker', NodeZipWorker);
+    const bytes = randomFillSync(new Uint8Array(64 * 1024 * 1024));
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(bytes)));
+    const createUrl = vi.fn();
+    const previousCreateUrl = Object.getOwnPropertyDescriptor(URL, 'createObjectURL');
+    Object.defineProperty(URL, 'createObjectURL', { configurable: true, value: createUrl });
+    const postMessage = NodeZipWorker.prototype.postMessage;
+    vi.spyOn(NodeZipWorker.prototype, 'postMessage').mockImplementation(function (this: NodeZipWorker, files, transfer) {
+      postMessage.call(this, files, transfer);
+      posted.resolve(this);
+    });
+    const finished = deferred<void>();
+    vi.mocked(downloadSeriesPackage).mockImplementation(async (data, signal) => {
+      try { await actual.downloadSeriesPackage(data, signal); }
+      finally { finished.resolve(); }
+    });
+    const view = render(<App />);
+    try {
+      fireEvent.click(seriesControl());
+      const worker = await posted.promise;
+      await worker.started;
+      // These events run while real synchronous compression is in the worker.
+      fireEvent.click(screen.getByTestId('button-nav-script'));
+      expect(screen.getByTestId('view-script-studio')).toBeVisible();
+      fireEvent.click(screen.getByTestId('button-nav-dashboard'));
+      expect(seriesControl()).toBeDisabled();
+      expect(worker.terminated).toBe(false);
+      await act(async () => {
+        fireEvent.click(screen.getByRole('button', { name: 'Cancel ZIP export' }));
+        await finished.promise;
+      });
+      expect(worker.terminated).toBe(true);
+      expect(seriesControl()).toBeEnabled();
+      expect(screen.getByTestId('status-toast')).toHaveTextContent('Series ZIP export cancelled.');
+      expect(createUrl).not.toHaveBeenCalled();
+      expect(screen.queryByText(seriesSuccess)).not.toBeInTheDocument();
+    } finally {
+      view.unmount();
+      for (const worker of NodeZipWorker.instances) worker.terminate();
+      vi.unstubAllGlobals();
+      if (previousCreateUrl) Object.defineProperty(URL, 'createObjectURL', previousCreateUrl);
+      else Reflect.deleteProperty(URL, 'createObjectURL');
+    }
+  }, 20_000);
+
   it.each(['resolve', 'reject'])('preserves packing across navigation and handles %s while away', async completion => {
     const packing = deferred<void>();
     const failureMessage = 'The series ZIP could not be packed.';

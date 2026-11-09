@@ -1,15 +1,23 @@
 import assert from 'node:assert/strict';
-import { after, afterEach, before, mock, test } from 'node:test';
+import { after, afterEach, before, beforeEach, mock, test } from 'node:test';
 import { execFileSync } from 'node:child_process';
 import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { randomFillSync } from 'node:crypto';
 import { strFromU8, unzipSync } from 'fflate';
 import type { Clip, Episode, Scene, Shot, StudioBootstrap } from '@workspace/api-client-react';
 import { assetSrc, buildSeriesPackage, downloadSeriesPackage } from '../src/lib/seriesPackage';
+import { NodeZipWorker } from './nodeZipWorker';
+import { compressArchive } from '../src/lib/zipArchive';
 
 let directory: string;
 let playableVideo: Buffer;
+const previousWorker = Object.getOwnPropertyDescriptor(globalThis, 'Worker');
+beforeEach(() => {
+  NodeZipWorker.instances = [];
+  Object.defineProperty(globalThis, 'Worker', { configurable: true, value: NodeZipWorker });
+});
 before(async () => {
   directory = await mkdtemp(join(tmpdir(), 'series-zip-test-'));
   const path = join(directory, 'fixture.mp4');
@@ -19,7 +27,12 @@ before(async () => {
   ], { timeout: 30_000 });
   playableVideo = await readFile(path);
 });
-afterEach(() => mock.restoreAll());
+afterEach(() => {
+  mock.restoreAll();
+  for (const worker of NodeZipWorker.instances) worker.terminate();
+  if (previousWorker) Object.defineProperty(globalThis, 'Worker', previousWorker);
+  else Reflect.deleteProperty(globalThis, 'Worker');
+});
 after(async () => { if (directory) await rm(directory, { recursive: true, force: true }); });
 
 const episode = (id: number): Episode => ({
@@ -275,6 +288,100 @@ test('pre-cancelled packages reject before requesting any files', async () => {
   const fetch = mock.method(globalThis, 'fetch', async () => mp4());
   await assert.rejects(buildSeriesPackage(bootstrap(), { ...options, signal: controller.signal }), { name: 'AbortError' });
   assert.equal(fetch.mock.callCount(), 0);
+  assert.equal(NodeZipWorker.instances.length, 0);
+});
+
+test('compression transfers input buffers and stops its worker after a valid archive is returned', async () => {
+  const bytes = new Uint8Array([1, 2, 3, 4]);
+  const pending = compressArchive({ 'reference.bin': bytes });
+  assert.equal(bytes.byteLength, 0, 'input ownership should be transferred, not copied');
+  const archive = await pending;
+  assert.deepEqual(unzipSync(archive)['reference.bin'], new Uint8Array([1, 2, 3, 4]));
+  assert.equal(NodeZipWorker.instances[0].terminated, true);
+  assert.equal(NodeZipWorker.instances[0].onmessage, null);
+});
+
+test('large ZIP packing leaves the main thread responsive and cancellation prevents a download', { timeout: 20_000 }, async () => {
+  const data = bootstrap();
+  data.episodes = [];
+  data.clips = [];
+  data.assets = [{
+    id: 5, projectId: 1, episodeId: null, sceneId: null, characterId: null,
+    kind: 'storyboard', objectPath: '/objects/large', name: 'large.bin',
+    contentType: 'application/octet-stream', createdAt: '2026-01-01T00:00:00Z',
+  }];
+  const bytes = randomFillSync(new Uint8Array(64 * 1024 * 1024));
+  mock.method(globalThis, 'fetch', async () => new Response(bytes));
+  const controller = new AbortController();
+  const createUrl = mock.method(URL, 'createObjectURL', () => {
+    throw new Error('A cancelled ZIP must never create a download URL');
+  });
+  const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+  Object.defineProperty(globalThis, 'window', { configurable: true, value: { location: { origin: options.origin } } });
+  let workerPosted!: (worker: NodeZipWorker) => void;
+  const posted = new Promise<NodeZipWorker>(resolve => { workerPosted = resolve; });
+  const postMessage = NodeZipWorker.prototype.postMessage;
+  mock.method(NodeZipWorker.prototype, 'postMessage', function (this: NodeZipWorker, files, transfer) {
+    postMessage.call(this, files, transfer);
+    workerPosted(this);
+  });
+  try {
+    const pending = downloadSeriesPackage(data, controller.signal);
+    const rejected = assert.rejects(pending, { name: 'AbortError' });
+    const worker = await posted;
+    await worker.started; // The real worker is now inside synchronous compression.
+    let responsive = false;
+    await new Promise<void>(resolve => setTimeout(() => {
+      responsive = true;
+      assert.equal(worker.terminated, false, 'large archive should still be packing');
+      controller.abort();
+      resolve();
+    }, 10));
+    await rejected;
+    assert.equal(responsive, true);
+    assert.equal(worker.terminated, true);
+    assert.equal(worker.onmessage, null);
+    assert.equal(createUrl.mock.callCount(), 0);
+  } finally {
+    if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow);
+    else Reflect.deleteProperty(globalThis, 'window');
+  }
+});
+
+test('worker failures reject explicitly, release the worker and remove the abort listener', async () => {
+  const controller = new AbortController();
+  const removed = mock.method(controller.signal, 'removeEventListener');
+  const pending = compressArchive({ 'broken.txt': new Uint8Array([1]) }, controller.signal);
+  const rejected = assert.rejects(pending, /compression failed/);
+  const worker = NodeZipWorker.instances[0];
+  worker.onerror!({ message: 'compression failed', preventDefault() {} });
+  await rejected;
+  assert.equal(worker.terminated, true);
+  assert.equal(removed.mock.callCount(), 1);
+});
+
+test('message decoding and transfer failures reject and release the worker', async () => {
+  const pending = compressArchive({});
+  const rejected = assert.rejects(pending, /could not be read/);
+  NodeZipWorker.instances[0].onmessageerror!();
+  await rejected;
+  assert.equal(NodeZipWorker.instances[0].terminated, true);
+
+  mock.method(NodeZipWorker.prototype, 'postMessage', () => { throw new Error('transfer failed'); });
+  await assert.rejects(compressArchive({}), /transfer failed/);
+  assert.equal(NodeZipWorker.instances[1].terminated, true);
+});
+
+test('a queued worker result cannot complete an archive after cancellation', async () => {
+  const controller = new AbortController();
+  const pending = compressArchive({}, controller.signal);
+  const rejected = assert.rejects(pending, { name: 'AbortError' });
+  const worker = NodeZipWorker.instances[0];
+  const queuedMessage = worker.onmessage!;
+  controller.abort();
+  queuedMessage({ data: new Uint8Array([1, 2, 3]) });
+  await rejected;
+  assert.equal(worker.terminated, true);
 });
 
 for (const stage of ['episode', 'reference', 'clip'] as const) {

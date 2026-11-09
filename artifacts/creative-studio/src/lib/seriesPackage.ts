@@ -1,4 +1,5 @@
-import { zipSync, strToU8 } from 'fflate';
+import { strToU8 } from 'fflate';
+import { compressArchive } from './zipArchive';
 import type { StudioBootstrap } from '@workspace/api-client-react';
 import { customFetch } from '@workspace/api-client-react';
 
@@ -213,7 +214,7 @@ export async function buildSeriesPackage(
     files['episode-video-reports.txt'] = strToU8(episodeVideoReports.join('\n'));
   }
   signal?.throwIfAborted();
-  return zipSync(files, { level: 6 });
+  return compressArchive(files, signal);
 }
 
 export async function downloadSeriesPackage(bootstrap: StudioBootstrap, signal?: AbortSignal): Promise<void> {
