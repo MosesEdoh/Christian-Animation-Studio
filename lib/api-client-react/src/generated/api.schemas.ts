@@ -5,6 +5,93 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+export interface MobileTokenExchangeInput {
+  /** @minLength 1 */
+  code: string;
+  /** @minLength 32 */
+  code_verifier: string;
+  redirect_uri: string;
+  /** @minLength 1 */
+  state: string;
+  /** @minLength 1 */
+  nonce: string;
+}
+
+export interface MobileSession {
+  token: string;
+}
+
+export interface LogoutSuccess {
+  success: boolean;
+}
+
+export type StudioExportInputAspectRatio = typeof StudioExportInputAspectRatio[keyof typeof StudioExportInputAspectRatio];
+
+
+export const StudioExportInputAspectRatio = {
+  '16:9': '16:9',
+  '9:16': '9:16',
+} as const;
+
+export type StudioExportInputQuality = typeof StudioExportInputQuality[keyof typeof StudioExportInputQuality];
+
+
+export const StudioExportInputQuality = {
+  '720p': '720p',
+  '1080p': '1080p',
+} as const;
+
+export interface StudioExportInput {
+  /**
+     * @minimum 1
+     * @nullable
+     */
+  episodeId: number | null;
+  aspectRatio: StudioExportInputAspectRatio;
+  quality: StudioExportInputQuality;
+}
+
+export type StudioExportAspectRatio = typeof StudioExportAspectRatio[keyof typeof StudioExportAspectRatio];
+
+
+export const StudioExportAspectRatio = {
+  '16:9': '16:9',
+  '9:16': '9:16',
+} as const;
+
+export type StudioExportQuality = typeof StudioExportQuality[keyof typeof StudioExportQuality];
+
+
+export const StudioExportQuality = {
+  '720p': '720p',
+  '1080p': '1080p',
+} as const;
+
+export type StudioExportStatus = typeof StudioExportStatus[keyof typeof StudioExportStatus];
+
+
+export const StudioExportStatus = {
+  queued: 'queued',
+  rendering: 'rendering',
+  ready: 'ready',
+  failed: 'failed',
+} as const;
+
+export interface StudioExport {
+  id: number;
+  /** @nullable */
+  episodeId: number | null;
+  aspectRatio: StudioExportAspectRatio;
+  quality: StudioExportQuality;
+  status: StudioExportStatus;
+  progress: number;
+  /** @nullable */
+  url: string | null;
+  /** @nullable */
+  error: string | null;
+  createdAt: string;
+}
+
 export interface ErrorEnvelope {
   error: string;
 }

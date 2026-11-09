@@ -1,9 +1,12 @@
 import {
   GetCurrentAuthUserResponse,
+  ExchangeMobileAuthorizationCodeBody,
+  ExchangeMobileAuthorizationCodeResponse,
 } from '@workspace/api-zod';
 import { db, usersTable } from '@workspace/db';
 import { Router, type IRouter, type Request, type Response } from 'express';
 import * as oidc from 'openid-client';
+import { isStudioEmailAllowed } from '../middlewares/studioAccess';
 
 import {
   clearSession,
@@ -120,9 +123,10 @@ async function upsertUser(claims: Record<string, unknown>) {
 }
 
 router.get('/auth/user', (req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'private, no-store');
   res.json(
     GetCurrentAuthUserResponse.parse({
-      user: req.isAuthenticated() ? req.user : null,
+      user: req.isAuthenticated() && isStudioEmailAllowed(req.user.email) ? req.user : null,
     }),
   );
 });
@@ -200,6 +204,10 @@ router.get('/callback', async (req: Request, res: Response) => {
     res.redirect('/api/login');
     return;
   }
+  if (!isStudioEmailAllowed(claims.email as string | undefined) || claims.email_verified === false) {
+    res.redirect(`${returnTo}${returnTo.includes('?') ? '&' : '?'}access=denied`);
+    return;
+  }
 
   const dbUser = await upsertUser(claims as unknown as Record<string, unknown>);
 
@@ -237,6 +245,50 @@ router.get('/logout', async (req: Request, res: Response) => {
   });
 
   res.redirect(endSessionUrl.href);
+});
+
+router.post('/mobile-auth/token-exchange', async (req: Request, res: Response): Promise<void> => {
+  const parsed = ExchangeMobileAuthorizationCodeBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid mobile sign-in request' });
+    return;
+  }
+  const { code, code_verifier, redirect_uri, state, nonce } = parsed.data;
+  try {
+    const redirect = new URL(redirect_uri);
+    // Native redirects only. Browser sign-in uses the cookie callback above.
+    if (!['frame-faith-mobile:', 'exp:', 'exps:'].includes(redirect.protocol)) {
+      res.status(400).json({ error: 'Unsupported mobile redirect' });
+      return;
+    }
+    redirect.searchParams.set('code', code);
+    redirect.searchParams.set('state', state);
+    redirect.searchParams.set('iss', ISSUER_URL);
+    const config = await getOidcConfig();
+    const tokens = await oidc.authorizationCodeGrant(config, redirect, {
+      pkceCodeVerifier: code_verifier, expectedState: state, expectedNonce: nonce, idTokenExpected: true,
+    });
+    const claims = tokens.claims();
+    if (!claims || claims.email_verified === false || !isStudioEmailAllowed(claims.email as string | undefined)) {
+      res.status(403).json({ error: 'This account is not approved for the studio.' });
+      return;
+    }
+    const user = await upsertUser(claims as unknown as Record<string, unknown>);
+    const token = await createSession({
+      user, access_token: tokens.access_token, refresh_token: tokens.refresh_token,
+      expires_at: tokens.expiresIn() ? Math.floor(Date.now() / 1000) + tokens.expiresIn()! : claims.exp,
+    });
+    res.json(ExchangeMobileAuthorizationCodeResponse.parse({ token }));
+  } catch (error) {
+    req.log.error(getSafeErrorMetadata(error), 'Mobile sign-in failed');
+    res.status(401).json({ error: 'Mobile sign-in could not be verified.' });
+  }
+});
+
+router.post('/mobile-auth/logout', async (req: Request, res: Response): Promise<void> => {
+  const sid = getSessionId(req);
+  if (sid) await deleteSession(sid);
+  res.json({ success: true });
 });
 
 export default router;

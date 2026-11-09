@@ -19,6 +19,69 @@ tags:
   - name: storage
     description: Persistent studio asset uploads
 paths:
+  /mobile-auth/token-exchange:
+    post:
+      operationId: exchangeMobileAuthorizationCode
+      tags: [auth]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MobileTokenExchangeInput" }
+      responses:
+        "200":
+          description: Authenticated mobile session
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MobileSession" }
+  /mobile-auth/logout:
+    post:
+      operationId: logoutMobileSession
+      tags: [auth]
+      responses:
+        "200":
+          description: Session removed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LogoutSuccess" }
+  /studio/exports:
+    get:
+      operationId: listStudioExports
+      tags: [studio]
+      responses:
+        "200":
+          description: Saved storyboard movie exports
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/StudioExport" }
+    post:
+      operationId: createStudioExport
+      tags: [studio]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/StudioExportInput" }
+      responses:
+        "202":
+          description: Queued storyboard movie
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StudioExport" }
+  /studio/exports/{id}/file:
+    get:
+      operationId: downloadStudioExport
+      tags: [studio]
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Protected MP4
+          content:
+            video/mp4:
+              schema: { type: string, format: binary }
   /healthz:
     get:
       operationId: healthCheck
@@ -423,6 +486,45 @@ components:
       schema:
         type: integer
   schemas:
+    MobileTokenExchangeInput:
+      type: object
+      required: [code, code_verifier, redirect_uri, state, nonce]
+      properties:
+        code: { type: string, minLength: 1 }
+        code_verifier: { type: string, minLength: 32 }
+        redirect_uri: { type: string, format: uri }
+        state: { type: string, minLength: 1 }
+        nonce: { type: string, minLength: 1 }
+    MobileSession:
+      type: object
+      required: [token]
+      properties:
+        token: { type: string }
+    LogoutSuccess:
+      type: object
+      required: [success]
+      properties:
+        success: { type: boolean }
+    StudioExportInput:
+      type: object
+      required: [episodeId, aspectRatio, quality]
+      properties:
+        episodeId: { type: ["integer", "null"], minimum: 1 }
+        aspectRatio: { type: string, enum: ["16:9", "9:16"] }
+        quality: { type: string, enum: ["720p", "1080p"] }
+    StudioExport:
+      type: object
+      required: [id, episodeId, aspectRatio, quality, status, progress, url, error, createdAt]
+      properties:
+        id: { type: integer }
+        episodeId: { type: ["integer", "null"] }
+        aspectRatio: { type: string, enum: ["16:9", "9:16"] }
+        quality: { type: string, enum: ["720p", "1080p"] }
+        status: { type: string, enum: [queued, rendering, ready, failed] }
+        progress: { type: integer }
+        url: { type: ["string", "null"] }
+        error: { type: ["string", "null"] }
+        createdAt: { type: string, format: date-time }
     ErrorEnvelope:
       type: object
       properties:

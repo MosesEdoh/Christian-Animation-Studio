@@ -27,13 +27,7 @@ export async function submitVideoGeneration(
   const provider = configuredProvider();
 
   if (provider === "mock") {
-    return {
-      provider,
-      status: "ready",
-      url: null,
-      thumbnailUrl: null,
-      duration: "00:04",
-    };
+    throw new Error("Video generation is not configured. Mock jobs do not produce video. Use storyboard movie export or configure a real provider.");
   }
 
   const apiKey = process.env.VIDEO_API_KEY;

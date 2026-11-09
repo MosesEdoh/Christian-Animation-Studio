@@ -1,5 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
+import { wakeMovieWorker, stopMovieWorker } from "./lib/movieRenderer";
 
 const rawPort = process.env["PORT"];
 
@@ -15,11 +16,21 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
-app.listen(port, (err) => {
+const server = app.listen(port, (err) => {
   if (err) {
     logger.error({ err }, "Error listening on port");
     process.exit(1);
   }
 
   logger.info({ port }, "Server listening");
+  void wakeMovieWorker();
+  setInterval(() => { void wakeMovieWorker(); }, 10_000).unref();
 });
+
+for (const signal of ["SIGTERM", "SIGINT"] as const) {
+  process.once(signal, () => {
+    const timeout = setTimeout(() => process.exit(1), 15_000);
+    timeout.unref();
+    void stopMovieWorker().finally(() => server.close(() => { clearTimeout(timeout); process.exit(0); }));
+  });
+}

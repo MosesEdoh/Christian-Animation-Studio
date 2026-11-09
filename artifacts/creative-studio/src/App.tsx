@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { zipSync, strToU8 } from 'fflate';
+import { useAuth } from '@workspace/replit-auth-web';
+import { MovieExports } from './components/MovieExports';
 import {
   AlertTriangle,
   Aperture,
@@ -175,7 +177,7 @@ async function downloadSeriesPackage(bootstrap: StudioBootstrap): Promise<void> 
       if (clipUrl.protocol !== 'https:' && clipUrl.origin !== window.location.origin) {
         throw new Error('Unsupported video URL');
       }
-      const response = await fetch(clipUrl, { credentials: 'omit' });
+      const response = await fetch(clipUrl, { credentials: clipUrl.origin === window.location.origin ? 'include' : 'omit' });
       const contentLength = Number(response.headers.get('content-length') ?? 0);
       if (!response.ok || (contentLength && downloadedVideoBytes + contentLength > 250 * 1024 * 1024)) {
         throw new Error('Video is not directly downloadable');
@@ -225,7 +227,7 @@ function AppRouter() {
   return (
     <RoutedErrorBoundary>
       <Switch>
-        <Route path="/" component={StudioWorkspace} />
+        <Route path="/" component={StudioGate} />
         <Route component={NotFound} />
       </Switch>
     </RoutedErrorBoundary>
@@ -237,7 +239,22 @@ function RoutedErrorBoundary({ children }: { children: ReactNode }) {
   return <ErrorBoundary resetKey={location}>{children}</ErrorBoundary>;
 }
 
-function StudioWorkspace() {
+function StudioGate() {
+  const auth = useAuth();
+  const cache = useQueryClient();
+  useEffect(() => { if (!auth.user) cache.clear(); }, [auth.user, cache]);
+  if (auth.isLoading) return <div className="content-wrap"><p>Checking private studio access…</p></div>;
+  if (!auth.user) return <main className="content-wrap" style={{ maxWidth: 620, margin: '10vh auto' }}>
+    <span className="eyebrow">FRAME & FAITH</span><h1>Your private studio</h1>
+    <p>Sign in with your approved account to view scripts, references, videos, and downloads.</p>
+    {new URLSearchParams(window.location.search).get('access') === 'denied' && <p role="alert">That account is not approved for this studio. Please use your approved account.</p>}
+    {auth.error && <p role="alert">{auth.error}</p>}
+    <button className="btn btn-primary" onClick={auth.login} data-testid="login-btn">Sign in</button>
+  </main>;
+  return <StudioWorkspace key={auth.user.id} authUser={auth.user} />;
+}
+
+function StudioWorkspace({ authUser }: { authUser: AuthUser }) {
   const [view, setView] = useState<View>('dashboard');
   const [toast, setToast] = useState<ToastState | null>(null);
   const [showProjectEditor, setShowProjectEditor] = useState(false);
@@ -260,7 +277,7 @@ function StudioWorkspace() {
   const [directorBeat, setDirectorBeat] = useState('');
   const [shotBeat, setShotBeat] = useState('');
   const [shotPrompt, setShotPrompt] = useState('');
-  const [provider, setProvider] = useState('mock');
+  const [provider, setProvider] = useState('configured');
   const [directorNotes, setDirectorNotes] = useState('');
   const [shotSuggestions, setShotSuggestions] = useState<
     Array<{ shotType: string; movement: string; angle: string; rationale: string; duration: string }>
@@ -271,8 +288,7 @@ function StudioWorkspace() {
     flags: string[];
     suggestions: string[];
   } | null>(null);
-  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
-  const [authChecked, setAuthChecked] = useState(false);
+  const authChecked = true;
   const [exportPending, setExportPending] = useState(false);
   const [faithQuestion, setFaithQuestion] = useState('');
   const [faithAgeBand, setFaithAgeBand] = useState<'5-8' | '9-12' | '13-17'>('9-12');
@@ -307,25 +323,6 @@ function StudioWorkspace() {
   const shots = bootstrap?.shots ?? [];
   const clips = bootstrap?.clips ?? [];
   const assets = bootstrap?.assets ?? [];
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch('/api/auth/user', { credentials: 'include' })
-      .then(async (response) => {
-        if (!response.ok) throw new Error('Unable to check sign-in');
-        return response.json() as Promise<{ user: AuthUser | null }>;
-      })
-      .then(({ user }) => {
-        if (!cancelled) setAuthUser(user);
-      })
-      .catch(() => {
-        if (!cancelled) setAuthUser(null);
-      })
-      .finally(() => {
-        if (!cancelled) setAuthChecked(true);
-      });
-    return () => { cancelled = true; };
-  }, []);
 
   const activeEpisode = useMemo(
     () => episodes.find((episode) => episode.id === project?.activeEpisodeId) ?? episodes[0],
@@ -971,8 +968,9 @@ function StudioWorkspace() {
       <WorkspaceFrame view={view} setView={navigateToView} authUser={authUser} authChecked={authChecked}>
         <div className="content-wrap">
           <div className="error-panel" data-testid="panel-bootstrap-error">
-            <h2>The room lights are still warming up.</h2>
-            <p>We could not load the studio board. Your work is safe; try reconnecting to the workspace.</p>
+            <h2>Studio access unavailable</h2>
+            <p>{bootstrapQuery.error instanceof Error ? bootstrapQuery.error.message : 'Sign in with your approved account or try reconnecting.'}</p>
+            <a href="/api/logout?returnTo=/" className="btn btn-quiet">Sign out</a>
             <button
               type="button"
               className="btn btn-primary"
@@ -990,6 +988,7 @@ function StudioWorkspace() {
   return (
     <WorkspaceFrame view={view} setView={navigateToView} project={project} authUser={authUser} authChecked={authChecked}>
       {renderView()}
+      {view === 'dashboard' && <div className="content-wrap"><MovieExports episodes={episodes} /></div>}
       {showProjectEditor ? (
         <ProjectEditor
           form={projectForm}
@@ -1777,7 +1776,7 @@ function AnimationView({
           <div className="field"><label htmlFor="shot-picker">Shot to animate</label><select id="shot-picker" value={selectedShotId ?? ''} onChange={(event) => setSelectedShotId(Number(event.target.value))} data-testid="select-animation-shot">{shots.map((shot) => <option value={shot.id} key={shot.id}>Shot {String(shot.number).padStart(2, '0')} · {shot.description}</option>)}</select></div>
           <div className="insight-box" style={{ marginTop: 18 }}><h3>Frame intention</h3><p>{activeShot?.beat ?? 'Choose a shot to see its intention.'}</p></div>
           <div className="field" style={{ marginTop: 18 }}><label htmlFor="animation-prompt">Motion prompt</label><textarea id="animation-prompt" value={shotPrompt} onChange={(event) => setShotPrompt(event.target.value)} data-testid="input-animation-prompt" placeholder="Describe the movement, texture, and restraint." /></div>
-          <div className="form-grid" style={{ marginTop: 15 }}><div className="field full"><label htmlFor="provider-picker">Video provider</label><select id="provider-picker" value={provider} onChange={(event) => setProvider(event.target.value)} data-testid="select-animation-provider"><option value="mock">Mock preview</option><option value="runway">Runway</option><option value="luma">Luma</option><option value="pika">Pika</option></select><span className="row-caption">The server adapter is selected with VIDEO_PROVIDER; this picker labels the queued clip.</span></div></div>
+          <div className="form-grid" style={{ marginTop: 15 }}><div className="field full"><label htmlFor="provider-picker">Video renderer</label><select id="provider-picker" value={provider} onChange={(event) => setProvider(event.target.value)} data-testid="select-animation-provider"><option value="configured">Configured external renderer</option></select><span className="row-caption">New AI clips require a configured video provider. No mock files are created. To watch the complete saved story now, build a storyboard MP4 from the dashboard.</span></div></div>
           <button type="button" className="btn btn-primary" style={{ marginTop: 15 }} data-testid="button-generate-clip" onClick={runClipGeneration} disabled={pending || !activeShot}><Play size={14} /> {pending ? 'Queuing clip…' : 'Queue animation clip'}</button>
         </section>
         <section className="panel pad" data-testid="panel-clip-queue">

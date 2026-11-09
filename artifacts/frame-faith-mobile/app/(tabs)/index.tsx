@@ -1,9 +1,11 @@
 import { ActivityIndicator, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { useGetStudioBootstrap, getGetStudioBootstrapQueryKey } from '@workspace/api-client-react';
 import { useColors } from '@/hooks/useColors';
+import { useAuth } from '@/lib/auth';
 
 export default function HomeScreen() {
   const colors = useColors();
+  const auth = useAuth();
   const query = useGetStudioBootstrap({ query: { queryKey: getGetStudioBootstrapQueryKey() } });
   if (query.isLoading) return <View style={[styles.center, { backgroundColor: colors.background }]}><ActivityIndicator color={colors.primary} /><Text style={{ color: colors.foreground }}>Loading your studio…</Text></View>;
   if (query.isError || !query.data) return <View style={[styles.center, { backgroundColor: colors.background }]}><Text style={{ color: colors.foreground }}>Could not load the studio.</Text><Pressable onPress={() => query.refetch()}><Text style={{ color: colors.teal, marginTop: 12 }}>Try again</Text></Pressable></View>;
@@ -11,6 +13,7 @@ export default function HomeScreen() {
   return (
     <ScrollView contentContainerStyle={[styles.container, { backgroundColor: colors.background }]}>
       <Text style={[styles.kicker, { color: colors.teal }]}>FRAME & FAITH · MOBILE</Text>
+      <Pressable onPress={auth.logout} testID="mobile-logout"><Text style={{ color: colors.teal }}>Sign out</Text></Pressable>
       <Text style={[styles.title, { color: colors.foreground }]}>{project.title}</Text>
       <Text style={[styles.text, { color: colors.mutedForeground }]}>{project.logline}</Text>
       <View style={[styles.hero, { backgroundColor: colors.foreground }]}>

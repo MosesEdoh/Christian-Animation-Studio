@@ -93,6 +93,19 @@ export const studioAssetsTable = pgTable("studio_assets", {
     .defaultNow(),
 });
 
+export const studioExportsTable = pgTable("studio_exports", {
+  id: serial("id").primaryKey(),
+  episodeId: integer("episode_id"),
+  aspectRatio: text("aspect_ratio").notNull(),
+  quality: text("quality").notNull(),
+  status: text("status").notNull().default("queued"),
+  progress: integer("progress").notNull().default(0),
+  objectPath: text("object_path"),
+  error: text("error"),
+  startedAt: timestamp("started_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const insertStudioProjectSchema = createInsertSchema(
   studioProjectsTable,
 ).omit({ id: true });

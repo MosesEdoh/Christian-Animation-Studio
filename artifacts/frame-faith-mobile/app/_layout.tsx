@@ -14,12 +14,16 @@ import { Fraunces_500Medium, Fraunces_600SemiBold } from '@expo-google-fonts/fra
 import { useFonts } from 'expo-font';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { setBaseUrl } from '@workspace/api-client-react';
+import { setBaseUrl, setAuthTokenGetter } from '@workspace/api-client-react';
+import * as SecureStore from 'expo-secure-store';
+import { Platform } from 'react-native';
+import { AuthProvider, AuthGate, AUTH_TOKEN_KEY, apiOrigin } from '@/lib/auth';
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
 const apiDomain = process.env.EXPO_PUBLIC_DOMAIN;
-if (apiDomain) setBaseUrl(`https://${apiDomain}`);
+if (apiDomain) setBaseUrl(apiOrigin());
+if (Platform.OS !== 'web') setAuthTokenGetter(() => SecureStore.getItemAsync(AUTH_TOKEN_KEY));
 
 const queryClient = new QueryClient();
 
@@ -55,7 +59,7 @@ export default function RootLayout() {
         <QueryClientProvider client={queryClient}>
           <GestureHandlerRootView>
             <KeyboardProvider>
-              <RootLayoutNav />
+              <AuthProvider><AuthGate><RootLayoutNav /></AuthGate></AuthProvider>
             </KeyboardProvider>
           </GestureHandlerRootView>
         </QueryClientProvider>

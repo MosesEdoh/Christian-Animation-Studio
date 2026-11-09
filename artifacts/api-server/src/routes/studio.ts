@@ -51,6 +51,7 @@ import {
 } from "@workspace/db";
 import { generateGeminiJson, generateGeminiText } from "../lib/ai";
 import { submitVideoGeneration } from "../lib/video-provider";
+import { ObjectStorageService } from "../lib/objectStorage";
 
 const router: IRouter = Router();
 
@@ -339,15 +340,25 @@ router.post("/studio/assets", async (req, res): Promise<void> => {
     res.status(400).json({ error: "Reference assets must be images" });
     return;
   }
+  const object = await new ObjectStorageService().getObjectEntityFile(parsed.data.objectPath);
+  const [objectMetadata] = await object.getMetadata();
+  if (!objectMetadata.contentType?.startsWith("image/") || Number(objectMetadata.size) > 10 * 1024 * 1024) {
+    res.status(400).json({ error: "Uploaded object is not a valid reference image." });
+    return;
+  }
   const [project] = await db.select().from(studioProjectsTable).limit(1);
   if (!project) {
     res.status(404).json({ error: "Studio project not found" });
     return;
   }
-  const [asset] = await db
-    .insert(studioAssetsTable)
-    .values({ ...parsed.data, projectId: project.id })
-    .returning();
+  const [asset] = await db.transaction(async tx => {
+    const created = await tx.insert(studioAssetsTable).values({ ...parsed.data, projectId: project.id }).returning();
+    if (parsed.data.kind === "character-reference" && parsed.data.characterId) {
+      await tx.update(studioCharactersTable).set({ referenceImageUrl: parsed.data.objectPath })
+        .where(eq(studioCharactersTable.id, parsed.data.characterId));
+    }
+    return created;
+  });
   res.status(201).json(CreateStudioAssetResponse.parse(asset));
 });
 
@@ -898,7 +909,7 @@ router.post("/studio/generation/shots", async (req, res): Promise<void> => {
       .insert(studioClipsTable)
       .values({
         shotId: parsed.data.shotId,
-        provider: parsed.data.provider ?? generated.provider,
+        provider: generated.provider,
         status: generated.status,
         url: generated.url,
         thumbnailUrl: generated.thumbnailUrl,
@@ -908,7 +919,7 @@ router.post("/studio/generation/shots", async (req, res): Promise<void> => {
     res.status(202).json(GenerateShotClipResponse.parse(clip));
   } catch (error) {
     req.log.error({ err: error }, "Shot clip generation failed");
-    res.status(502).json({ error: "The configured video provider failed" });
+    res.status(502).json({ error: "No real video was produced. Configure a real video provider, or build a storyboard movie from the dashboard." });
   }
 });
 

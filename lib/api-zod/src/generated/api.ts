@@ -8,6 +8,74 @@
 import * as zod from 'zod';
 
 
+
+export const exchangeMobileAuthorizationCodeBodyCodeVerifierMin = 32;
+
+
+
+
+
+export const ExchangeMobileAuthorizationCodeBody = zod.object({
+  "code": zod.string().min(1),
+  "code_verifier": zod.string().min(exchangeMobileAuthorizationCodeBodyCodeVerifierMin),
+  "redirect_uri": zod.string().url(),
+  "state": zod.string().min(1),
+  "nonce": zod.string().min(1)
+})
+
+export const ExchangeMobileAuthorizationCodeResponse = zod.object({
+  "token": zod.string()
+})
+
+
+export const LogoutMobileSessionResponse = zod.object({
+  "success": zod.boolean()
+})
+
+
+export const ListStudioExportsResponseItem = zod.object({
+  "id": zod.number().int(),
+  "episodeId": zod.number().int().nullable(),
+  "aspectRatio": zod.enum(['16:9', '9:16']),
+  "quality": zod.enum(['720p', '1080p']),
+  "status": zod.enum(['queued', 'rendering', 'ready', 'failed']),
+  "progress": zod.number().int(),
+  "url": zod.string().nullable(),
+  "error": zod.string().nullable(),
+  "createdAt": zod.coerce.date()
+})
+export const ListStudioExportsResponse = zod.array(ListStudioExportsResponseItem)
+
+
+
+
+
+export const CreateStudioExportBody = zod.object({
+  "episodeId": zod.number().int().min(1).nullable(),
+  "aspectRatio": zod.enum(['16:9', '9:16']),
+  "quality": zod.enum(['720p', '1080p'])
+})
+
+export const CreateStudioExportResponse = zod.object({
+  "id": zod.number().int(),
+  "episodeId": zod.number().int().nullable(),
+  "aspectRatio": zod.enum(['16:9', '9:16']),
+  "quality": zod.enum(['720p', '1080p']),
+  "status": zod.enum(['queued', 'rendering', 'ready', 'failed']),
+  "progress": zod.number().int(),
+  "url": zod.string().nullable(),
+  "error": zod.string().nullable(),
+  "createdAt": zod.coerce.date()
+})
+
+
+export const DownloadStudioExportParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const DownloadStudioExportResponse = zod.unknown()
+
+
 /**
  * Returns server health status
  * @summary Health check
