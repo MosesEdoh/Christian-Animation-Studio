@@ -6,9 +6,99 @@ import { lstat, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs
 import { hostname, tmpdir } from "node:os";
 import { join } from "node:path";
 import { MovieTemporaryStorage, MOVIE_RENDER_LEASE_MS } from "../src/lib/movieTemporaryStorage";
+import { bundleMovieRecoveryWorker, movieRecoveryProcess } from "./helpers/movieRecoveryProcess";
 
 const exists = async (path: string) => lstat(path).then(() => true, () => false);
 const noErrors = (error: unknown) => { throw error; };
+
+test("a killed render owner is reclaimed by API startup/scheduled recovery without harming a live worker", { timeout: 30_000 }, async () => {
+  const root = await mkdtemp(join(tmpdir(), "movie-process-recovery-test-"));
+  const workers: ReturnType<typeof movieRecoveryProcess>[] = [];
+  try {
+    const source = await bundleMovieRecoveryWorker();
+    const start = (mode: "owner" | "recovery") => {
+      const worker = movieRecoveryProcess(source, root, mode);
+      workers.push(worker);
+      return worker;
+    };
+    const abandonedOwner = start("owner");
+    const abandoned = await abandonedOwner.wait("owned");
+    const liveOwner = start("owner");
+    const live = await liveOwner.wait("owned");
+    assert.notEqual(abandoned.pid, live.pid);
+    for (const owner of [abandoned, live]) {
+      assert.deepEqual(JSON.parse(await readFile(join(owner.directory!, ".render-owner.json"), "utf8")),
+        { pid: owner.pid, host: hostname() });
+      assert.equal(await readFile(join(owner.directory!, "movie.mp4"), "utf8"), "unfinished render");
+    }
+    assert.equal(abandonedOwner.child.kill("SIGKILL"), true);
+    assert.deepEqual(await abandonedOwner.closed, [null, "SIGKILL"]);
+    assert.equal(await exists(join(root, `finally-${abandoned.pid}`)), false, "SIGKILL bypassed finally");
+    assert.equal(await exists(abandoned.directory!), true, "The crashed worker left actual render files");
+
+    const recovery = start("recovery");
+    await recovery.wait("imported");
+    await recovery.wait("listening");
+    const startup = await recovery.wait("scan");
+    assert.notEqual(startup.pid, abandoned.pid);
+    assert.notEqual(startup.pid, live.pid);
+    assert.equal(startup.removed, 0, "Startup must preserve a fresh crashed directory");
+    recovery.send("state");
+    const initialState = await recovery.wait("state");
+    assert.deepEqual(initialState.timers, [
+      { ms: 5 * 60_000, unrefs: 1 }, { ms: 10_000, unrefs: 1 },
+    ], "API startup registered unreferenced recovery and queue timers");
+    recovery.send("start-again");
+    assert.deepEqual(await recovery.wait("state"), initialState, "Recovery startup is idempotent");
+
+    const info = await lstat(abandoned.directory!);
+    const leaseEnd = Math.max(info.mtimeMs, info.ctimeMs, info.birthtimeMs) + MOVIE_RENDER_LEASE_MS;
+    recovery.send("tick", leaseEnd);
+    assert.equal((await recovery.wait("scan")).removed, 0, "The exact shared lease boundary is protected");
+    assert.equal(await exists(abandoned.directory!), true);
+    recovery.send("tick", leaseEnd + 1);
+    assert.equal((await recovery.wait("scan")).removed, 1, "The next scheduled scan reclaims the dead owner");
+    assert.equal(await exists(abandoned.directory!), false);
+    recovery.send("tick", leaseEnd + MOVIE_RENDER_LEASE_MS);
+    assert.equal((await recovery.wait("scan")).removed, 0, "Repeated recovery is harmless");
+    process.kill(live.pid!, 0);
+    assert.equal(await readFile(join(live.directory!, "movie.mp4"), "utf8"), "unfinished render",
+      "Another process's live render stays protected even well past the lease");
+
+    recovery.send("stop");
+    const stopped = await recovery.wait("stopped");
+    assert.deepEqual(stopped.timers, [{ ms: 10_000, unrefs: 1 }], "Shutdown clears the recovery timer");
+    assert.equal(stopped.created, initialState.created, "A stopped renderer cannot restart recovery");
+    assert.equal(recovery.child.kill("SIGTERM"), true);
+    assert.deepEqual(await recovery.closed, [0, null], "The API signal handler closes cleanly");
+
+    // A fresh API process must also reclaim already-expired folders at startup,
+    // not merely after its first scheduled interval.
+    const secondAbandoned = start("owner");
+    const second = await secondAbandoned.wait("owned");
+    secondAbandoned.child.kill("SIGKILL");
+    assert.deepEqual(await secondAbandoned.closed, [null, "SIGKILL"]);
+    const expiredInfo = await lstat(second.directory!);
+    const expiredNow = Math.max(expiredInfo.mtimeMs, expiredInfo.ctimeMs, expiredInfo.birthtimeMs) +
+      MOVIE_RENDER_LEASE_MS + 1;
+    const restarted = movieRecoveryProcess(source, root, "recovery", expiredNow);
+    workers.push(restarted);
+    await restarted.wait("imported");
+    await restarted.wait("listening");
+    assert.equal((await restarted.wait("scan")).removed, 1, "Startup reclaims an already-expired crashed render");
+    assert.equal(await exists(second.directory!), false);
+    assert.equal(await exists(join(root, `finally-${second.pid}`)), false);
+    assert.equal(await readFile(join(live.directory!, "movie.mp4"), "utf8"), "unfinished render");
+
+    liveOwner.send("release");
+    assert.deepEqual(await liveOwner.closed, [0, null]);
+    assert.equal(await readFile(join(root, `finally-${live.pid}`), "utf8"), "ran");
+    assert.equal(await exists(live.directory!), false, "A healthy owner still performs finally cleanup");
+  } finally {
+    await Promise.all(workers.map(worker => worker.dispose()));
+    await rm(root, { recursive: true, force: true });
+  }
+});
 
 test("recovery waits beyond the thirty-minute lease, removes legacy leftovers, and is repeatable", async () => {
   const root = await mkdtemp(join(tmpdir(), "movie-recovery-test-"));
