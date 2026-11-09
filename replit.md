@@ -59,6 +59,7 @@ The studio provides a dashboard, screenplay editor, AI co-writer, audience safet
 - Run `pnpm --filter @workspace/api-spec run codegen` after changing `lib/api-spec/openapi.yaml`.
 - Gemini direct API keys for new users may reject older model names; the client defaults to `GEMINI_MODEL` or `gemini-3.6-flash`.
 - A mock video provider creates queue records, not rendered video; real media downloads depend on the selected provider returning accessible clip URLs.
+- Provider-clip episode MP4 exports allow two active exports per API process (including streaming and cleanup), with no queue. Excess requests return 503 / `EPISODE_EXPORT_BUSY` and `Retry-After: 15`. This limit is separate from storyboard movies; multiple API processes each have their own limit.
 
 ## Pointers
 

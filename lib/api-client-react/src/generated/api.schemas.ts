@@ -480,6 +480,20 @@ export interface ShotGenerationInput {
   provider?: string | null;
 }
 
+export type DownloadStudioEpisodeVideo503Code = typeof DownloadStudioEpisodeVideo503Code[keyof typeof DownloadStudioEpisodeVideo503Code];
+
+
+export const DownloadStudioEpisodeVideo503Code = {
+  EPISODE_EXPORT_BUSY: 'EPISODE_EXPORT_BUSY',
+} as const;
+
+export type DownloadStudioEpisodeVideo503 = {
+  error: string;
+  code: DownloadStudioEpisodeVideo503Code;
+  /** @minimum 1 */
+  retryAfterSeconds: number;
+};
+
 export type BeginBrowserLoginParams = {
 returnTo?: string;
 };

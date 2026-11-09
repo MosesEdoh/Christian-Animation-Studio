@@ -22,6 +22,23 @@ const status = () => screen.getByTestId(`status-episode-download-${episode.id}`)
 beforeEach(() => { download.mockReset(); });
 
 describe('EpisodeDownload controls', () => {
+  it('shows busy/retry feedback, leaves no spinner or cancel button, and permits a manual retry', async () => {
+    const message = 'Episode exports are busy. Try again in 15 seconds. Your export was not queued.';
+    download.mockResolvedValueOnce({ failed: true, busy: true, message, skippedClips: [] })
+      .mockResolvedValueOnce(success);
+    render(<EpisodeDownload episode={episode} hasClips />);
+    fireEvent.click(button());
+    expect(await screen.findByText(message)).toBeVisible();
+    expect(button()).toBeEnabled();
+    expect(button()).toHaveTextContent('Retry MP4');
+    expect(screen.queryByRole('button', { name: 'Cancel episode 3 export' })).not.toBeInTheDocument();
+    expect(download).toHaveBeenCalledTimes(1);
+    fireEvent.click(button());
+    expect(await screen.findByText(success.message)).toBeVisible();
+    expect(button()).toHaveTextContent('Download MP4');
+    expect(download).toHaveBeenCalledTimes(2);
+  });
+
   it('cancels immediately, allows retry, and ignores a stale completion', async () => {
     let finish!: (result: EpisodeDownloadResult) => void;
     let retryFinish!: (result: EpisodeDownloadResult) => void;

@@ -103,6 +103,21 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/EpisodeVideoUnavailable" }
+        "503":
+          description: Episode export capacity is full; no work was queued
+          headers:
+            Retry-After:
+              description: Suggested delay in seconds before a manual retry
+              schema: { type: integer, minimum: 1 }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [error, code, retryAfterSeconds]
+                properties:
+                  error: { type: string }
+                  code: { type: string, enum: [EPISODE_EXPORT_BUSY] }
+                  retryAfterSeconds: { type: integer, minimum: 1 }
   /healthz:
     get:
       operationId: healthCheck

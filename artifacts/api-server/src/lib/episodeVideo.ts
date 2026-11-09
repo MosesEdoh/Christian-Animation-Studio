@@ -13,6 +13,20 @@ const MAX_REDIRECTS = 3;
 const CLIP_TIMEOUT_MS = 30_000;
 const FFMPEG_TIMEOUT_MS = 3 * 60_000;
 
+// Per API process, independent of the queued storyboard movie worker.
+// Keep admission synchronous and before any temp files or provider requests.
+export const MAX_CONCURRENT_EPISODE_EXPORTS = 2;
+export const EPISODE_EXPORT_RETRY_SECONDS = 15;
+let activeExports = 0;
+const retainedExports = new Set<string>();
+
+export class EpisodeVideoBusyError extends Error {
+  constructor() {
+    super(`Episode exports are busy. Try again in ${EPISODE_EXPORT_RETRY_SECONDS} seconds.`);
+    this.name = "EpisodeVideoBusyError";
+  }
+}
+
 export class EpisodeVideoUnavailableError extends Error {
   constructor(public readonly report: EpisodeVideoReport) {
     super("No downloadable, playable clips are available for this episode.");
@@ -200,11 +214,15 @@ export async function assembleEpisodeVideo(
   signal?: AbortSignal,
 ): Promise<AssembledEpisodeVideo> {
   signal?.throwIfAborted();
-  const directory = await mkdtemp(join(tmpdir(), "frame-faith-episode-"));
+  if (activeExports >= MAX_CONCURRENT_EPISODE_EXPORTS) throw new EpisodeVideoBusyError();
+  activeExports++;
+  let directory: string | undefined;
   const report: EpisodeVideoReport = { usedClipIds: [], skippedClips: [] };
   const normalizedFiles: string[] = [];
   let sourceBytes = 0;
   try {
+    directory = await mkdtemp(join(tmpdir(), "frame-faith-episode-"));
+    signal?.throwIfAborted();
     for (const clip of clips) {
       signal?.throwIfAborted();
       if (clip.status !== "ready") {
@@ -274,13 +292,24 @@ export async function assembleEpisodeVideo(
       "-c", "copy", "-movflags", "+faststart", outputPath,
     ], signal);
     signal?.throwIfAborted();
+    // Retain capacity while the caller streams the MP4 and until cleanup completes.
+    retainedExports.add(directory);
     return { directory, outputPath, report };
   } catch (error) {
-    await rm(directory, { recursive: true, force: true });
+    try {
+      if (directory) await rm(directory, { recursive: true, force: true });
+    } finally {
+      activeExports--;
+    }
     throw error;
   }
 }
 
 export async function removeEpisodeVideo(directory: string): Promise<void> {
-  await rm(directory, { recursive: true, force: true });
+  try {
+    await rm(directory, { recursive: true, force: true });
+  } finally {
+    // Deleting twice (or concurrently) must never release another export's slot.
+    if (retainedExports.delete(directory)) activeExports--;
+  }
 }

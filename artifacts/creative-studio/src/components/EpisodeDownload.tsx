@@ -37,7 +37,7 @@ export function EpisodeDownload({ episode, hasClips }: { episode: Episode; hasCl
         aria-label={`Download episode ${episode.number} MP4`}
         disabled={pending || !hasClips} onClick={download}>
         {pending ? <LoaderCircle size={14} className="animate-spin" /> : <Download size={14} />}
-        {pending ? 'Assembling MP4…' : 'Download MP4'}
+        {pending ? 'Assembling MP4…' : result?.busy ? 'Retry MP4' : 'Download MP4'}
       </button>
       {pending && (
         <button type="button" className="btn btn-quiet"

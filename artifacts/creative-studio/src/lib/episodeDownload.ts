@@ -3,6 +3,7 @@ export type EpisodeDownloadResult = {
   message: string;
   skippedClips: EpisodeVideoIssue[];
   failed?: boolean;
+  busy?: boolean;
 };
 
 function readIssues(value: unknown): EpisodeVideoIssue[] {
@@ -28,6 +29,16 @@ export async function downloadEpisodeVideo(
     if (!response.ok) {
       const failure = await response.json().catch(() => ({}));
       signal?.throwIfAborted();
+      if (response.status === 503 && failure.code === 'EPISODE_EXPORT_BUSY') {
+        const seconds = Number(response.headers.get('retry-after') ?? failure.retryAfterSeconds);
+        const retryAfter = Number.isInteger(seconds) && seconds > 0 && seconds <= 300 ? seconds : 15;
+        return {
+          failed: true,
+          busy: true,
+          message: `Episode exports are busy. Try again in ${retryAfter} seconds. Your export was not queued.`,
+          skippedClips: [],
+        };
+      }
       return {
         failed: true,
         message: response.status === 401

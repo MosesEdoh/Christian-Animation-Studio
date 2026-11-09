@@ -8,6 +8,7 @@ import {
   CompleteStudioEpisodeBody,
   CompleteStudioEpisodeParams,
   CompleteStudioEpisodeResponse,
+  type DownloadStudioEpisodeVideo503,
   CreateStudioCharacterBody,
   CreateStudioCharacterResponse,
   CreateStudioAssetBody,
@@ -54,7 +55,10 @@ import {
 import { generateGeminiJson, generateGeminiText } from "../lib/ai";
 import { submitVideoGeneration } from "../lib/video-provider";
 import { ObjectStorageService } from "../lib/objectStorage";
-import { assembleEpisodeVideo, removeEpisodeVideo, EpisodeVideoUnavailableError } from "../lib/episodeVideo";
+import {
+  assembleEpisodeVideo, removeEpisodeVideo, EpisodeVideoUnavailableError,
+  EpisodeVideoBusyError, EPISODE_EXPORT_RETRY_SECONDS,
+} from "../lib/episodeVideo";
 import { episodeVideoClipsQuery } from "../lib/episodeVideoClips";
 
 const router: IRouter = Router();
@@ -901,6 +905,16 @@ router.get("/studio/episodes/:id/video", async (req, res): Promise<void> => {
   } catch (error) {
     if (controller.signal.aborted || res.destroyed) return;
     const message = error instanceof Error ? error.message : "Episode video assembly failed.";
+    if (error instanceof EpisodeVideoBusyError) {
+      res.setHeader("Retry-After", String(EPISODE_EXPORT_RETRY_SECONDS));
+      res.setHeader("Cache-Control", "private, no-store");
+      res.status(503).json({
+        error: message,
+        code: "EPISODE_EXPORT_BUSY",
+        retryAfterSeconds: EPISODE_EXPORT_RETRY_SECONDS,
+      } satisfies DownloadStudioEpisodeVideo503);
+      return;
+    }
     if (error instanceof EpisodeVideoUnavailableError) {
       res.status(422).json({
         error: message,

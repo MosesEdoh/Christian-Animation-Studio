@@ -20,6 +20,8 @@ export * from './characterUpdate';
 export * from './clip';
 export * from './clipStatus';
 export * from './contentCheckResult';
+export * from './downloadStudioEpisodeVideo503';
+export * from './downloadStudioEpisodeVideo503Code';
 export * from './episode';
 export * from './episodeCompletionInput';
 export * from './episodeCompletionInputAgeBand';

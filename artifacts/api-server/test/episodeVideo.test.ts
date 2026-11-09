@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { Writable } from "node:stream";
 import {
   assembleEpisodeVideo, EpisodeVideoUnavailableError, removeEpisodeVideo,
+  EpisodeVideoBusyError, MAX_CONCURRENT_EPISODE_EXPORTS, EPISODE_EXPORT_RETRY_SECONDS,
   type EpisodeVideoClip,
 } from "../src/lib/episodeVideo";
 
@@ -298,6 +299,116 @@ test("the HTTP handler streams MP4/report headers and returns exact unavailable 
 
 const episodeDirectories = async () =>
   (await readdir(tmpdir())).filter(name => name.startsWith("frame-faith-episode-")).sort();
+
+test("concurrent HTTP exports reject overflow without downloads or temp files and release on cancellation and failure", async () => {
+  process.env.DATABASE_URL ??= "postgresql://test:test@localhost/unused";
+  const { db, studioEpisodesTable } = await import("@workspace/db");
+  const { default: router } = await import("../src/routes/studio");
+  const handler = router.stack.find(layer => layer.route?.path === "/studio/episodes/:id/video")!.route.stack[0].handle;
+  mock.method(db, "select", (() => ({
+    from(table: unknown) {
+      if (table === studioEpisodesTable) return { where: async () => [{ id: 1, number: 8 }] };
+      const chain = {
+        innerJoin: () => chain, where: () => chain,
+        orderBy: async () => [{ clip: clip(1) }],
+      };
+      return chain;
+    },
+  })) as typeof db.select);
+  let downloads = 0;
+  const waiting: Array<() => void> = [];
+  mock.method(globalThis, "fetch", async (_input, init) => {
+    downloads++;
+    return new Promise<Response>((_resolve, reject) => {
+      waiting.push(() => reject(new Error("Provider failed")));
+      init!.signal!.addEventListener("abort", () => reject(init!.signal!.reason), { once: true });
+    });
+  });
+  const invoke = () => {
+    const headers = new Map<string, string>();
+    let status = 200;
+    let json: unknown;
+    const req = Object.assign(new EventEmitter(), {
+      params: { id: "1" }, log: { error() { assert.fail("Unexpected server error"); } },
+    });
+    const res = Object.assign(new Writable({ write(_chunk, _encoding, done) { done(); } }), {
+      setHeader(key: string, value: string) { headers.set(key, value); },
+      status(code: number) { status = code; return this; },
+      json(body: unknown) { json = body; },
+    });
+    const done = handler(req, res, () => {});
+    return { req, res, done, result: () => ({ status, json, headers }) };
+  };
+  const before = await episodeDirectories();
+  const admitted = Array.from({ length: MAX_CONCURRENT_EPISODE_EXPORTS }, invoke);
+  try {
+    for (let attempt = 0; downloads < MAX_CONCURRENT_EPISODE_EXPORTS && attempt < 500; attempt++) {
+      await new Promise(resolve => setTimeout(resolve, 10));
+    }
+    assert.equal(downloads, MAX_CONCURRENT_EPISODE_EXPORTS);
+    const occupiedDirs = await episodeDirectories();
+    const overflow = Array.from({ length: 12 }, invoke);
+    await Promise.all(overflow.map(request => request.done));
+    for (const request of overflow) {
+      const result = request.result();
+      assert.equal(result.status, 503);
+      assert.equal(result.headers.get("Retry-After"), String(EPISODE_EXPORT_RETRY_SECONDS));
+      assert.deepEqual(result.json, {
+        error: `Episode exports are busy. Try again in ${EPISODE_EXPORT_RETRY_SECONDS} seconds.`,
+        code: "EPISODE_EXPORT_BUSY", retryAfterSeconds: EPISODE_EXPORT_RETRY_SECONDS,
+      });
+      assert.equal(request.req.listenerCount("aborted"), 0);
+    }
+    assert.equal(downloads, MAX_CONCURRENT_EPISODE_EXPORTS);
+    assert.deepEqual(await episodeDirectories(), occupiedDirs);
+    admitted[0].res.destroy();
+    await admitted[0].done;
+    const retry = invoke();
+    try {
+      for (let attempt = 0; downloads === MAX_CONCURRENT_EPISODE_EXPORTS && attempt < 500; attempt++) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      assert.equal(downloads, MAX_CONCURRENT_EPISODE_EXPORTS + 1);
+      waiting.at(-1)!();
+      await retry.done;
+      assert.equal(retry.result().status, 422);
+    } finally {
+      retry.res.destroy();
+      await retry.done;
+    }
+  } finally {
+    admitted.forEach(request => request.res.destroy());
+    await Promise.all(admitted.map(request => request.done));
+  }
+  assert.deepEqual(await episodeDirectories(), before);
+  // Failure/cancellation did not leak capacity.
+  mock.method(globalThis, "fetch", async () => videoResponse());
+  const retry = await assembleEpisodeVideo([clip(1)]);
+  await removeEpisodeVideo(retry.directory);
+});
+
+test("completed MP4s retain admission until delivery cleanup, which releases each slot only once", async () => {
+  const before = await episodeDirectories();
+  mock.method(globalThis, "fetch", async () => videoResponse());
+  const completed: Awaited<ReturnType<typeof assembleEpisodeVideo>>[] = [];
+  try {
+    for (let index = 0; index < MAX_CONCURRENT_EPISODE_EXPORTS; index++) {
+      completed.push(await assembleEpisodeVideo([clip(index + 1)]));
+    }
+    const fetchCount = mock.method(globalThis, "fetch", async () => videoResponse());
+    await assert.rejects(assembleEpisodeVideo([clip(99)]), EpisodeVideoBusyError);
+    assert.equal(fetchCount.mock.callCount(), 0);
+    await Promise.all([
+      removeEpisodeVideo(completed[0].directory),
+      removeEpisodeVideo(completed[0].directory),
+    ]);
+    completed.push(await assembleEpisodeVideo([clip(100)]));
+    await assert.rejects(assembleEpisodeVideo([clip(101)]), EpisodeVideoBusyError);
+  } finally {
+    await Promise.all(completed.map(result => removeEpisodeVideo(result.directory)));
+  }
+  assert.deepEqual(await episodeDirectories(), before);
+});
 
 test("pre-cancelled assembly does not fetch or leave temporary files", async () => {
   const before = await episodeDirectories();

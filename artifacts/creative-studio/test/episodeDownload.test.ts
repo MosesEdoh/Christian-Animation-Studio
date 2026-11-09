@@ -128,6 +128,23 @@ test('expired sign-in, server errors, and network failures are explicit', async 
   assert.match((await downloadEpisodeVideo(episode)).message, /Check your connection/);
 });
 
+test('busy admission shows a retry delay without saving, polling, or queueing', async () => {
+  const env = browser();
+  const requests = mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({
+    error: 'Episode exports are busy.', code: 'EPISODE_EXPORT_BUSY', retryAfterSeconds: 15,
+  }), { status: 503, headers: { 'retry-after': '15' } }));
+  const result = await downloadEpisodeVideo(episode);
+  assert.equal(result.failed, true);
+  assert.equal(result.busy, true);
+  assert.match(result.message, /busy.*15 seconds.*not queued/);
+  assert.deepEqual(result.skippedClips, []);
+  assert.equal(env.clicks(), 0);
+  assert.equal(requests.mock.callCount(), 1);
+  mock.method(globalThis, 'fetch', async () => mp4());
+  assert.match((await downloadEpisodeVideo(episode)).message, /download started/);
+  assert.equal(env.clicks(), 1);
+});
+
 test('empty videos and HTML responses never trigger a download', async () => {
   const env = browser();
   mock.method(globalThis, 'fetch', async () => new Response('', {

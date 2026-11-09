@@ -32,6 +32,7 @@ import type {
   CharacterUpdate,
   Clip,
   ContentCheckResult,
+  DownloadStudioEpisodeVideo503,
   EpisodeCompletionInput,
   EpisodeCompletionResponse,
   EpisodeVideoUnavailable,
@@ -497,7 +498,7 @@ export const getDownloadStudioEpisodeVideoQueryKey = (id: number,) => {
     }
 
 
-export const getDownloadStudioEpisodeVideoQueryOptions = <TData = Awaited<ReturnType<typeof downloadStudioEpisodeVideo>>, TError = ErrorType<EpisodeVideoUnavailable>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof downloadStudioEpisodeVideo>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getDownloadStudioEpisodeVideoQueryOptions = <TData = Awaited<ReturnType<typeof downloadStudioEpisodeVideo>>, TError = ErrorType<EpisodeVideoUnavailable | DownloadStudioEpisodeVideo503>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof downloadStudioEpisodeVideo>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
@@ -516,14 +517,14 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type DownloadStudioEpisodeVideoQueryResult = NonNullable<Awaited<ReturnType<typeof downloadStudioEpisodeVideo>>>
-export type DownloadStudioEpisodeVideoQueryError = ErrorType<EpisodeVideoUnavailable>
+export type DownloadStudioEpisodeVideoQueryError = ErrorType<EpisodeVideoUnavailable | DownloadStudioEpisodeVideo503>
 
 
 /**
  * @summary Assemble downloadable provider clips into one episode MP4
  */
 
-export function useDownloadStudioEpisodeVideo<TData = Awaited<ReturnType<typeof downloadStudioEpisodeVideo>>, TError = ErrorType<EpisodeVideoUnavailable>>(
+export function useDownloadStudioEpisodeVideo<TData = Awaited<ReturnType<typeof downloadStudioEpisodeVideo>>, TError = ErrorType<EpisodeVideoUnavailable | DownloadStudioEpisodeVideo503>>(
  id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof downloadStudioEpisodeVideo>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
