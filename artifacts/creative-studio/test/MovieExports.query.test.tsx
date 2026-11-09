@@ -91,7 +91,7 @@ afterEach(() => {
 });
 
 function mount() {
-  render(<QueryClientProvider client={client}>
+  return render(<QueryClientProvider client={client}>
     <MovieExports episodes={[episode]} accountId="test-account" projectId={1} />
   </QueryClientProvider>);
 }
@@ -215,6 +215,100 @@ describe('MovieExports with generated queries and mocked HTTP', () => {
     expect(client.getQueryData(movieHistoryQueryKey())).toEqual({ pages: [{ items: [ready], nextCursor: undefined }], pageParams: [undefined] });
     // jsdom never fetches the media; only JSON endpoints may be requested.
     expect(requests.some(request => request.path.endsWith('/file'))).toBe(false);
+  });
+
+  describe('returning to the studio with the normal stale-cache policy', () => {
+    beforeEach(() => {
+      // The app uses QueryClient's default staleTime (0). Other tests use
+      // Infinity to prove polling/invalidation independently of mount refresh.
+      // Do not force refetchOnMount, invalidate, or replace the retained cache.
+      client.setDefaultOptions({
+        ...client.getDefaultOptions(),
+        queries: { ...client.getDefaultOptions().queries, staleTime: undefined },
+      });
+    });
+
+    it('refreshes a cached active render to ready on remount before the next poll', async () => {
+      const rendering: StudioExport = { ...queued, status: 'rendering', progress: 45 };
+      saved = [rendering];
+      const firstVisit = mount();
+      await advance(10);
+      expect(listRequests()).toHaveLength(1);
+      expect(screen.getByTestId('movie-job-11')).toHaveTextContent('rendering 45%');
+      expectNoPreview();
+      const query = client.getQueryCache().find({ queryKey: movieHistoryQueryKey() })!;
+      const cachedRendering = query.state.data;
+      expect(query.getObserversCount()).toBe(1);
+
+      firstVisit.unmount();
+      const ready: StudioExport = {
+        ...rendering, status: 'ready', progress: 100, url: `${exportsPath}/11/file`,
+      };
+      saved = [ready];
+      await advance(9000);
+      expect(listRequests()).toHaveLength(1);
+      expect(query.getObserversCount()).toBe(0);
+      expect(query.state.data).toBe(cachedRendering);
+
+      const returnTime = Date.now();
+      mount();
+      // Remount initially renders the retained active job, not an empty cache.
+      expect(screen.getByTestId('movie-job-11')).toHaveTextContent('rendering 45%');
+      expectNoPreview();
+      await advance(10);
+      expect(Date.now() - returnTime).toBe(10);
+      expect(listRequests()).toHaveLength(2);
+      expect(client.getQueryCache().find({ queryKey: movieHistoryQueryKey() })).toBe(query);
+      expect(query.getObserversCount()).toBe(1);
+      expect(screen.getByTestId('movie-job-11')).toHaveTextContent('ready');
+      expect(screen.getByTestId('movie-preview')).toHaveAttribute('src', ready.url);
+      expect(screen.getByTestId('download-movie')).toHaveAttribute('href', ready.url);
+      expect(screen.getByTestId('download-movie')).toHaveAttribute('download', 'storyboard-11-720p.mp4');
+      expect(client.getQueryData(movieHistoryQueryKey())).toEqual({
+        pages: [{ items: [ready], nextCursor: undefined }], pageParams: [undefined],
+      });
+      expect(requests.some(request => request.path.endsWith('/file'))).toBe(false);
+    });
+
+    it('keeps one polling observer across repeated navigation and stops polling while away', async () => {
+      saved = [{ ...queued, status: 'rendering', progress: 45 }];
+      let visit = mount();
+      await advance(10);
+      const query = client.getQueryCache().find({ queryKey: movieHistoryQueryKey() })!;
+      let expectedRequests = 1;
+
+      for (let navigation = 0; navigation < 3; navigation += 1) {
+        expect(query.getObserversCount()).toBe(1);
+        await advance(2989);
+        expect(listRequests()).toHaveLength(expectedRequests);
+        await advance(11);
+        expect(listRequests()).toHaveLength(++expectedRequests);
+        expect(screen.getByTestId('movie-job-11')).toHaveTextContent('rendering 45%');
+        expectNoPreview();
+
+        visit.unmount();
+        expect(query.getObserversCount()).toBe(0);
+        // Use a non-interval multiple so leaked timers cannot stay in sync
+        // with a new observer and hide behind request deduplication.
+        await advance(6017);
+        expect(listRequests()).toHaveLength(expectedRequests);
+
+        visit = mount();
+        await advance(10);
+        expect(listRequests()).toHaveLength(++expectedRequests);
+        expect(client.getQueryCache().find({ queryKey: movieHistoryQueryKey() })).toBe(query);
+        expect(query.getObserversCount()).toBe(1);
+      }
+
+      // Several more intervals must still produce just one request per tick.
+      await advance(9000);
+      expect(listRequests()).toHaveLength(expectedRequests + 3);
+      visit.unmount();
+      expect(query.getObserversCount()).toBe(0);
+      await advance(9000);
+      expect(listRequests()).toHaveLength(expectedRequests + 3);
+      expect(requests.some(request => request.path.endsWith('/file'))).toBe(false);
+    });
   });
 
   it('preserves the ready preview during a failed list poll and clears the error on the next successful poll', async () => {
