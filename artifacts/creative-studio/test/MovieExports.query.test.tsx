@@ -29,6 +29,7 @@ let createResponse: () => Promise<Response>;
 let unexpectedRequests: string[];
 let olderPageFails: boolean;
 let deletionFails: boolean;
+let listFails: boolean;
 
 function json(value: unknown, status = 200) {
   return new Response(JSON.stringify(value), {
@@ -41,7 +42,7 @@ beforeEach(() => {
   saved = [];
   requests = [];
   unexpectedRequests = [];
-  olderPageFails = deletionFails = false;
+  olderPageFails = deletionFails = listFails = false;
   createResponse = async () => {
     saved = [queued];
     return json(queued, 201);
@@ -64,6 +65,7 @@ beforeEach(() => {
     if (method === 'GET' && (path === exportsPath || path.startsWith(`${exportsPath}?`))) {
       const cursor = new URL(path, 'http://test').searchParams.get('beforeId');
       if (cursor && olderPageFails) return json({ error: 'History temporarily unavailable' }, 503);
+      if (!cursor && listFails) return json({ error: 'Movie list temporarily unavailable' }, 503);
       return json(saved.filter(job => !cursor || job.id < Number(cursor)).slice(0, 100));
     }
     if (method === 'DELETE' && path.startsWith(`${exportsPath}/`)) {
@@ -212,6 +214,82 @@ describe('MovieExports with generated queries and mocked HTTP', () => {
     expect(screen.getByTestId('download-movie')).toHaveAttribute('download', 'storyboard-11-720p.mp4');
     expect(client.getQueryData(movieHistoryQueryKey())).toEqual({ pages: [{ items: [ready], nextCursor: undefined }], pageParams: [undefined] });
     // jsdom never fetches the media; only JSON endpoints may be requested.
+    expect(requests.some(request => request.path.endsWith('/file'))).toBe(false);
+  });
+
+  it('preserves the ready preview during a failed list poll and clears the error on the next successful poll', async () => {
+    const ready: StudioExport = {
+      ...queued, id: 10, status: 'ready', progress: 100, url: `${exportsPath}/10/file`,
+    };
+    saved = [queued, ready];
+    mount();
+    await advance(10);
+    expect(listRequests()).toHaveLength(1);
+    expect(screen.getByTestId('movie-job-11')).toHaveTextContent('queued');
+    const preview = screen.getByTestId('movie-preview');
+    expect(preview).toHaveAttribute('src', ready.url);
+    expect(screen.getByTestId('download-movie')).toHaveAttribute('href', ready.url);
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+
+    listFails = true;
+    saved = [{ ...queued, status: 'rendering', progress: 45 }, ready];
+    await advance(3000);
+    expect(listRequests()).toHaveLength(2);
+    expect(screen.getByRole('alert')).toHaveTextContent('Could not load movie exports.');
+    expect(screen.getByRole('button', { name: 'Retry', exact: true })).toBeEnabled();
+    expect(screen.getByTestId('movie-job-11')).toHaveTextContent('queued');
+    expect(screen.getByTestId('movie-job-10')).toHaveTextContent('ready');
+    expect(screen.getByTestId('movie-preview')).toBe(preview);
+    expect(preview).toHaveAttribute('src', ready.url);
+    expect(screen.getByTestId('download-movie')).toHaveAttribute('href', ready.url);
+
+    listFails = false;
+    await advance(3000);
+    expect(listRequests()).toHaveLength(3);
+    expect(screen.getByTestId('movie-job-11')).toHaveTextContent('rendering 45%');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry', exact: true })).not.toBeInTheDocument();
+    expect(screen.getByTestId('movie-preview')).toBe(preview);
+    expect(preview).toHaveAttribute('src', ready.url);
+    expect(screen.getByTestId('download-movie')).toHaveAttribute('href', ready.url);
+    expect(client.getQueryData(movieHistoryQueryKey())).toEqual({
+      pages: [{ items: saved, nextCursor: undefined }], pageParams: [undefined],
+    });
+    expect(requests.some(request => request.path.endsWith('/file'))).toBe(false);
+  });
+
+  it('retries a failed list request immediately without waiting for the polling interval', async () => {
+    const ready: StudioExport = {
+      ...queued, id: 10, status: 'ready', progress: 100, url: `${exportsPath}/10/file`,
+    };
+    saved = [queued, ready];
+    mount();
+    await advance(10);
+    expect(listRequests()).toHaveLength(1);
+
+    listFails = true;
+    await advance(3000);
+    expect(listRequests()).toHaveLength(2);
+    expect(screen.getByRole('alert')).toHaveTextContent('Could not load movie exports.');
+    const failedPollTime = Date.now();
+
+    listFails = false;
+    saved = [{ ...queued, status: 'rendering', progress: 70 }, ready];
+    // Recovery alone must not trigger a request. Only the click should refetch.
+    await advance(10);
+    expect(listRequests()).toHaveLength(2);
+    fireEvent.click(screen.getByRole('button', { name: 'Retry', exact: true }));
+    await advance(10);
+    expect(Date.now() - failedPollTime).toBe(20);
+    expect(listRequests()).toHaveLength(3);
+    expect(screen.getByTestId('movie-job-11')).toHaveTextContent('rendering 70%');
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Retry', exact: true })).not.toBeInTheDocument();
+    expect(screen.getByTestId('movie-preview')).toHaveAttribute('src', ready.url);
+    expect(screen.getByTestId('download-movie')).toHaveAttribute('href', ready.url);
+    expect(client.getQueryData(movieHistoryQueryKey())).toEqual({
+      pages: [{ items: saved, nextCursor: undefined }], pageParams: [undefined],
+    });
     expect(requests.some(request => request.path.endsWith('/file'))).toBe(false);
   });
 
