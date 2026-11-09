@@ -43,6 +43,10 @@ onlyBuiltDependencies:
   - unrs-resolver
 
 overrides:
+  # Expo SDK 58's latest tooling still pins these vulnerable major versions.
+  # Preserve its glob/minimatch APIs while using the patched release lines.
+  'glob@>=9 <14.0.2': 14.0.4
+  'minimatch@>=7 <11.0.1': 11.0.5
   '@esbuild-kit/esm-loader': npm:tsx@^4.21.0
   '@expo/ngrok-bin>@expo/ngrok-bin-darwin-arm64': '-'
   '@expo/ngrok-bin>@expo/ngrok-bin-darwin-x64': '-'
