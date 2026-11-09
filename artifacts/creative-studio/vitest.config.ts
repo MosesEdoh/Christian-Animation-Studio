@@ -7,10 +7,13 @@ export default defineConfig({
   plugins: [react()],
   resolve: {
     alias: { '@': path.resolve(import.meta.dirname, 'src') },
-    dedupe: ['react', 'react-dom'],
+    dedupe: ['react', 'react-dom', '@tanstack/react-query'],
   },
   test: {
     environment: 'jsdom',
+    // Generated hooks live in a workspace package with its own React peer.
+    // Transform React Query so Vite's dedupe also applies to its React import.
+    server: { deps: { inline: ['@tanstack/react-query'] } },
     include: ['test/**/*.test.tsx'],
     setupFiles: ['test/setup.ts'],
     clearMocks: true,
