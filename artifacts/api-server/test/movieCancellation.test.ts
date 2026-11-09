@@ -23,7 +23,7 @@ let reference: boolean;
 let stallWrite: ((patch: Partial<Row>, condition: SQL, apply: () => Row[]) => Promise<Row[]> | undefined) | undefined;
 const dialect = new PgDialect();
 const makeJob = (id: number, status: Row["status"] = "queued"): Row => ({
-  id, episodeId: 1, status, aspectRatio: "16:9", quality: "720p",
+  id, requestId: null, episodeId: 1, status, aspectRatio: "16:9", quality: "720p",
   progress: 0, objectPath: null, sizeBytes: null, error: null, startedAt: null, createdAt: new Date(),
 });
 // Evaluate the worker's real Drizzle predicates, not hand-written cancellation logic.

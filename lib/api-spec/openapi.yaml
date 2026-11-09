@@ -52,10 +52,18 @@ paths:
             schema: { $ref: "#/components/schemas/StudioExportInput" }
       responses:
         "202":
-          description: Queued storyboard movie
+          description: Queued storyboard movie, or the original job for a repeated requestId (including finished jobs).
           content:
             application/json:
               schema: { $ref: "#/components/schemas/StudioExport" }
+        "400":
+          description: Invalid export request
+        "404":
+          description: Episode not found
+        "409":
+          description: Request ID was already used with a different episode, orientation, or resolution
+        "429":
+          description: Movie queue is full
   /studio/exports/preflight:
     get:
       operationId: preflightStudioExport
@@ -562,6 +570,12 @@ components:
       type: object
       required: [episodeId, aspectRatio, quality]
       properties:
+        requestId:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9_-]+$'
+          description: Optional unique ID for this creation intent. Reuse with identical inputs after a lost response to retrieve the original job in any status, for as long as its history exists. Use a new ID for a deliberate new export. Requests without an ID retain legacy active-job deduplication.
         episodeId: { type: ["integer", "null"], minimum: 1 }
         aspectRatio: { type: string, enum: ["16:9", "9:16"] }
         quality: { type: string, enum: ["720p", "1080p"] }

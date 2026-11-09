@@ -6,6 +6,7 @@ Private creative workspace for writing, directing, storyboarding, and generating
 
 - `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
 - `pnpm run typecheck` — full typecheck across all packages
+- `pnpm test:movie-exports` — movie resource-limit, cancellation, deletion, preflight, queue idempotency, and component tests. Idempotency tests require `DATABASE_URL` and use an isolated temporary schema.
 - `pnpm test:episode-exports` — episode assembly, ZIP, download helper, and signed-in dashboard component regression tests; requires `ffmpeg` and `ffprobe`, creates temporary media, and mocks provider downloads without querying the database
 - `pnpm test:episode-admission` — shared admission unit and PostgreSQL multi-process/crash-recovery tests; requires `DATABASE_URL` and the current DB schema; uses isolated test pool names
 - `pnpm --filter @workspace/creative-studio run test:components` — dashboard and episode download controls in jsdom; no sign-in, database, or running servers required
@@ -61,6 +62,7 @@ The studio provides a dashboard, screenplay editor, AI co-writer, audience safet
 ## Gotchas
 
 - Run `pnpm --filter @workspace/api-spec run codegen` after changing `lib/api-spec/openapi.yaml`.
+- Before running an API version that uses movie request IDs, apply the additive migration with `pnpm --filter @workspace/api-server exec tsx ../../lib/db/src/migrate-movie-request-id.ts`. Post-merge setup runs it automatically; it preserves older movie history and creates a unique nullable request-ID index.
 - Gemini direct API keys for new users may reject older model names; the client defaults to `GEMINI_MODEL` or `gemini-3.6-flash`.
 - A mock video provider creates queue records, not rendered video; real media downloads depend on the selected provider returning accessible clip URLs.
 - Provider-clip episode MP4 exports share a global capacity of two via PostgreSQL leases (including streaming and cleanup), with no queue. Excess requests return 503 / `EPISODE_EXPORT_BUSY` and `Retry-After: 15`. Owners renew every 15 seconds; leases expire after 60 seconds, and failed renewal stops the export. Database failures never fall back to local admission. This is separate from the storyboard movie queue.

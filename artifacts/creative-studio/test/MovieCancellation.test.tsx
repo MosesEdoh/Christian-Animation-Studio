@@ -50,7 +50,7 @@ it('shows cancellation separately from failure and retries the same format as a 
   expect(screen.queryByRole('button', { name: 'Cancel movie' })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole('button', { name: 'Build again' }));
   await waitFor(() => expect(api.create).toHaveBeenCalledWith({ data: {
-    episodeId: episode.id, aspectRatio: '9:16', quality: '1080p',
+    episodeId: episode.id, aspectRatio: '9:16', quality: '1080p', requestId: expect.any(String),
   } }));
 });
 

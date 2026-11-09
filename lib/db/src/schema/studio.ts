@@ -96,6 +96,7 @@ export const studioAssetsTable = pgTable("studio_assets", {
 
 export const studioExportsTable = pgTable("studio_exports", {
   id: serial("id").primaryKey(),
+  requestId: text("request_id").unique(),
   episodeId: integer("episode_id"),
   aspectRatio: text("aspect_ratio").notNull(),
   quality: text("quality").notNull(),

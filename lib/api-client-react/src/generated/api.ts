@@ -208,7 +208,7 @@ return customFetch<StudioExport>(getCreateStudioExportUrl(),
 
 export const getCreateStudioExportMutationKey = () => ['createStudioExport'] as const;
 
-export const getCreateStudioExportMutationOptions = <TError = ErrorType<unknown>,
+export const getCreateStudioExportMutationOptions = <TError = ErrorType<void>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createStudioExport>>, TError,CreateStudioExportMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
 ): UseMutationOptions<Awaited<ReturnType<typeof createStudioExport>>, TError,CreateStudioExportMutationVariables, TContext> => {
 
@@ -237,10 +237,10 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
 
     export type CreateStudioExportMutationResult = NonNullable<Awaited<ReturnType<typeof createStudioExport>>>
     export type CreateStudioExportMutationBody = BodyType<StudioExportInput>
-    export type CreateStudioExportMutationError = ErrorType<unknown>
+    export type CreateStudioExportMutationError = ErrorType<void>
     export type CreateStudioExportMutationVariables = {data: BodyType<StudioExportInput>}
 
-    export const useCreateStudioExport = <TError = ErrorType<unknown>,
+    export const useCreateStudioExport = <TError = ErrorType<void>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createStudioExport>>, TError,CreateStudioExportMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
  ): UseMutationResult<
         Awaited<ReturnType<typeof createStudioExport>>,

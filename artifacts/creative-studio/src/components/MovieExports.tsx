@@ -6,12 +6,13 @@ import { movieSizeLabel } from '../lib/movieSize';
 import { trackEvent } from '../lib/analytics';
 
 type MovieFormat = { aspectRatio: '16:9' | '9:16'; quality: '720p' | '1080p' };
+type MovieRequest = MovieFormat & { requestId: string };
 type PreflightOutcome = 'passed' | 'blocked' | 'unavailable';
 type MovieBatch = {
   episodeId: number | null;
   label: string;
   queued: MovieFormat[];
-  remaining: MovieFormat[];
+  remaining: MovieRequest[];
 };
 const formatLabel = (format: MovieFormat) => `${format.aspectRatio} · ${format.quality}`;
 
@@ -25,6 +26,9 @@ export function MovieExports({ episodes }: { episodes: Episode[] }) {
   const [queueing, setQueueing] = useState(false);
   const [batch, setBatch] = useState<MovieBatch | null>(null);
   const queueLock = useRef(false);
+  // Keep unconfirmed single requests stable until acknowledged. Batch requests
+  // carry their own IDs so changing the form cannot change a missing-format retry.
+  const unconfirmed = useRef(new Map<string, string>());
   const seriesPreflight = useRef<PreflightOutcome | 'unchecked'>('unchecked');
   const lastEstimateEvent = useRef('');
   const estimateParams = {
@@ -97,7 +101,7 @@ export function MovieExports({ episodes }: { episodes: Episode[] }) {
   }
   const ready = jobs.jobs.filter(job => job.status === 'ready' && job.url);
   const selected = ready.find(job => job.id === selectedId) ?? ready[0];
-  async function queue(all: boolean, retry?: { episodeId: number | null; aspectRatio: '16:9' | '9:16'; quality: '720p' | '1080p' }, resume?: MovieBatch) {
+  async function queue(all: boolean, retry?: { id: number; episodeId: number | null; aspectRatio: '16:9' | '9:16'; quality: '720p' | '1080p' }, resume?: MovieBatch) {
     if (queueLock.current) return;
     queueLock.current = true;
     setQueueing(true);
@@ -105,9 +109,15 @@ export function MovieExports({ episodes }: { episodes: Episode[] }) {
     const targetId = resume ? resume.episodeId : retry ? retry.episodeId : episodeId === 'series' ? null : Number(episodeId);
     const requestMode = resume ? 'missing_formats' : retry ? 'retry' : all ? 'all_formats' : 'single';
     const precedingSeriesPreflight = seriesPreflight.current;
-    const formats = resume ? resume.remaining : retry ? [{ aspectRatio: retry.aspectRatio, quality: retry.quality }] : all
+    const selections = retry ? [{ aspectRatio: retry.aspectRatio, quality: retry.quality }] : all
       ? (['16:9', '9:16'] as const).flatMap(ratio => (['720p', '1080p'] as const).map(size => ({ aspectRatio: ratio, quality: size })))
       : [{ aspectRatio, quality }];
+    const singleKey = `${retry ? `rebuild-${retry.id}` : 'single'}:${targetId}:${selections[0]!.aspectRatio}:${selections[0]!.quality}`;
+    const formats: MovieRequest[] = resume ? resume.remaining : selections.map(format => {
+      const requestId = (!all && unconfirmed.current.get(singleKey)) || crypto.randomUUID();
+      if (!all) unconfirmed.current.set(singleKey, requestId);
+      return { ...format, requestId };
+    });
     let progress: MovieBatch | null = resume ?? (all ? {
       episodeId: targetId,
       label: targetId === null ? 'Entire series' : `Episode ${episodes.find(episode => episode.id === targetId)?.number ?? targetId}`,
@@ -142,6 +152,7 @@ export function MovieExports({ episodes }: { episodes: Episode[] }) {
       }
       for (const format of formats) {
         await create.mutateAsync({ data: { episodeId: targetId, ...format } });
+        if (!all && !resume) unconfirmed.current.delete(singleKey);
         trackEvent('movie_queue_succeeded', {
           target: targetId === null ? 'series' : 'episode',
           aspect_ratio: format.aspectRatio, quality: format.quality,

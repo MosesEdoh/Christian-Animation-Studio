@@ -18,7 +18,7 @@ let signedIn: boolean;
 let approved: boolean;
 const dialect = new PgDialect();
 const job = (id: number, status: Row["status"], objectPath: string | null = "/objects/movie.mp4"): Row => ({
-  id, status, objectPath, episodeId: 1, aspectRatio: "16:9", quality: "720p",
+  id, requestId: null, status, objectPath, episodeId: 1, aspectRatio: "16:9", quality: "720p",
   progress: 100, sizeBytes: null, error: null, startedAt: null, createdAt: new Date(),
 });
 function matches(row: Row, predicate: SQL) {

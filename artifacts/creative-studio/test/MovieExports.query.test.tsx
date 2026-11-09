@@ -235,7 +235,7 @@ describe('MovieExports with generated queries and mocked HTTP', () => {
     expect(posts).toHaveLength(1);
     expect(posts[0].path).toBe(exportsPath);
     expect(JSON.parse(posts[0].body as string)).toEqual({
-      episodeId: null, aspectRatio: '16:9', quality: '720p',
+      episodeId: null, aspectRatio: '16:9', quality: '720p', requestId: expect.any(String),
     });
     expect(screen.getByRole('button', { name: 'Build storyboard MP4' })).toBeDisabled();
     expect(listRequests()).toHaveLength(1);

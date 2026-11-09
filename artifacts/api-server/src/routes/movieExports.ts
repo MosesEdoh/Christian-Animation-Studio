@@ -32,15 +32,38 @@ router.get("/studio/exports", async (req, res): Promise<void> => {
 router.post("/studio/exports", async (req, res): Promise<void> => {
   const parsed = CreateStudioExportBody.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: "Choose an episode, orientation, and resolution." }); return; }
+  const { requestId, episodeId, aspectRatio, quality } = parsed.data;
+  // Look up before episode validation and capacity checks: a lost acknowledgement
+  // must remain recoverable even after the job finishes or the queue fills.
+  async function replayRequest(): Promise<boolean> {
+    if (!requestId) return false;
+    const [existing] = await db.select().from(studioExportsTable).where(eq(studioExportsTable.requestId, requestId));
+    if (!existing) return false;
+    if (existing.episodeId !== episodeId || existing.aspectRatio !== aspectRatio || existing.quality !== quality) {
+      res.status(409).json({ error: "This request ID was already used for a different movie. Use a new request ID." });
+    } else {
+      res.status(202).json(CreateStudioExportResponse.parse(exportView(existing)));
+    }
+    return true;
+  }
+  if (await replayRequest()) return;
   if (parsed.data.episodeId) {
     const [episode] = await db.select().from(studioEpisodesTable).where(eq(studioEpisodesTable.id, parsed.data.episodeId));
     if (!episode) { res.status(404).json({ error: "Episode not found" }); return; }
   }
   const pending = await db.select().from(studioExportsTable).where(inArray(studioExportsTable.status, ["queued", "rendering"]));
-  const existing = pending.find(job => job.episodeId === parsed.data.episodeId && job.aspectRatio === parsed.data.aspectRatio && job.quality === parsed.data.quality);
+  const existing = !requestId && pending.find(job => job.episodeId === episodeId && job.aspectRatio === aspectRatio && job.quality === quality);
   if (existing) { res.status(202).json(CreateStudioExportResponse.parse(exportView(existing))); return; }
   if (pending.length >= 16) { res.status(429).json({ error: "The movie queue is full. Wait for the current exports." }); return; }
-  const [job] = await db.insert(studioExportsTable).values({ ...parsed.data, status: "queued" }).returning();
+  // The unique database constraint arbitrates concurrent requests, including
+  // requests handled by different API instances. Only the winner queues work.
+  const [job] = await db.insert(studioExportsTable).values({ ...parsed.data, status: "queued" })
+    .onConflictDoNothing({ target: studioExportsTable.requestId }).returning();
+  if (!job) {
+    if (await replayRequest()) return;
+    res.status(503).json({ error: "Could not recover the movie request. Retry with the same request ID." });
+    return;
+  }
   res.status(202).json(CreateStudioExportResponse.parse(exportView(job!)));
   void wakeMovieWorker();
 });

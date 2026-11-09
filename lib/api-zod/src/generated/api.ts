@@ -43,10 +43,15 @@ export const ListStudioExportsResponseItem = zod.object({
 export const ListStudioExportsResponse = zod.array(ListStudioExportsResponseItem)
 
 
+export const createStudioExportBodyRequestIdMax = 128;
+
+
+export const createStudioExportBodyRequestIdRegExp = new RegExp('^[A-Za-z0-9_-]+$');
 
 
 
 export const CreateStudioExportBody = zod.object({
+  "requestId": zod.string().min(1).max(createStudioExportBodyRequestIdMax).regex(createStudioExportBodyRequestIdRegExp).optional().describe('Optional unique ID for this creation intent. Reuse with identical inputs after a lost response to retrieve the original job in any status, for as long as its history exists. Use a new ID for a deliberate new export. Requests without an ID retain legacy active-job deduplication.'),
   "episodeId": zod.int().min(1).nullable(),
   "aspectRatio": zod.enum(['16:9', '9:16']),
   "quality": zod.enum(['720p', '1080p'])

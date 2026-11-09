@@ -298,7 +298,7 @@ describe('MovieExports queue controls', () => {
     fireEvent.click(build());
     await expectRefresh(invalidate);
     expect(api.create).toHaveBeenCalledExactlyOnceWith({
-      data: { episodeId: null, aspectRatio: '16:9', quality: '720p' },
+      data: { episodeId: null, aspectRatio: '16:9', quality: '720p', requestId: expect.any(String) },
     });
   });
 
@@ -321,7 +321,7 @@ describe('MovieExports queue controls', () => {
     fireEvent.click(build());
     await expectRefresh(invalidate);
     expect(api.create).toHaveBeenCalledExactlyOnceWith({
-      data: { episodeId: target === 'series' ? null : episode.id, aspectRatio, quality },
+      data: { episodeId: target === 'series' ? null : episode.id, aspectRatio, quality, requestId: expect.any(String) },
     });
   });
 
@@ -334,10 +334,10 @@ describe('MovieExports queue controls', () => {
     await expectRefresh(invalidate);
     const episodeId = target === 'series' ? null : otherEpisode.id;
     expect(api.create.mock.calls.map(([request]) => request)).toEqual([
-      { data: { episodeId, aspectRatio: '16:9', quality: '720p' } },
-      { data: { episodeId, aspectRatio: '16:9', quality: '1080p' } },
-      { data: { episodeId, aspectRatio: '9:16', quality: '720p' } },
-      { data: { episodeId, aspectRatio: '9:16', quality: '1080p' } },
+      { data: { episodeId, aspectRatio: '16:9', quality: '720p', requestId: expect.any(String) } },
+      { data: { episodeId, aspectRatio: '16:9', quality: '1080p', requestId: expect.any(String) } },
+      { data: { episodeId, aspectRatio: '9:16', quality: '720p', requestId: expect.any(String) } },
+      { data: { episodeId, aspectRatio: '9:16', quality: '1080p', requestId: expect.any(String) } },
     ]);
   });
 
@@ -384,6 +384,67 @@ describe('MovieExports queue controls', () => {
 });
 
 describe('MovieExports errors and retries', () => {
+  it('keeps each missing format request ID after a lost response and uses fresh IDs for a new batch', async () => {
+    api.create.mockResolvedValueOnce(job()).mockRejectedValueOnce(new Error('Connection dropped after acceptance.'));
+    const { invalidate } = mount();
+    fireEvent.click(buildAll());
+    await expectRefresh(invalidate);
+    const firstRequest = api.create.mock.calls[0][0].data;
+    const uncertainRequest = api.create.mock.calls[1][0].data;
+    expect(firstRequest.requestId).toBeTruthy();
+    expect(uncertainRequest.requestId).not.toBe(firstRequest.requestId);
+    fireEvent.click(screen.getByRole('button', { name: 'Queue missing formats' }));
+    await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(2));
+    expect(api.create.mock.calls[2][0].data).toEqual(uncertainRequest);
+    const confirmedIds = [0, 2, 3, 4].map(i => api.create.mock.calls[i][0].data.requestId);
+    expect(new Set(confirmedIds).size).toBe(4);
+    await waitFor(() => expect(buildAll()).toBeEnabled());
+    fireEvent.click(buildAll());
+    await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(3));
+    const newIds = api.create.mock.calls.slice(5).map(([request]) => request.data.requestId);
+    expect(new Set(newIds).size).toBe(4);
+    expect(newIds.every(id => !confirmedIds.includes(id))).toBe(true);
+  });
+
+  it('reuses an unconfirmed single request after selection changes, then creates a fresh intent after success', async () => {
+    api.create.mockRejectedValueOnce(new Error('Response lost.'));
+    const { invalidate } = mount();
+    fireEvent.click(build());
+    await screen.findByRole('alert');
+    await waitFor(() => expect(build()).toBeEnabled());
+    const uncertain = api.create.mock.calls[0][0].data;
+    select('Orientation', '9:16');
+    fireEvent.click(build());
+    await expectRefresh(invalidate);
+    expect(api.create.mock.calls[1][0].data.requestId).not.toBe(uncertain.requestId);
+    await waitFor(() => expect(build()).toBeEnabled());
+    select('Orientation', '16:9');
+    fireEvent.click(build());
+    await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(2));
+    expect(api.create.mock.calls[2][0].data).toEqual(uncertain);
+    await waitFor(() => expect(build()).toBeEnabled());
+    fireEvent.click(build());
+    await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(3));
+    expect(api.create.mock.calls[3][0].data.requestId).not.toBe(uncertain.requestId);
+  });
+
+  it('retries an unconfirmed Build again with its key, but uses a new key after acknowledgement', async () => {
+    api.jobs = [job({ status: 'failed' })];
+    api.create.mockRejectedValueOnce(new Error('Response lost.'));
+    const { invalidate } = mount();
+    const retry = screen.getByRole('button', { name: 'Build again' });
+    fireEvent.click(retry);
+    await screen.findByRole('alert');
+    await waitFor(() => expect(retry).toBeEnabled());
+    fireEvent.click(retry);
+    await expectRefresh(invalidate);
+    expect(api.create.mock.calls[1][0]).toEqual(api.create.mock.calls[0][0]);
+    await waitFor(() => expect(retry).toBeEnabled());
+    fireEvent.click(retry);
+    await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(2));
+    expect(api.create.mock.calls[2][0].data.requestId).not.toBe(api.create.mock.calls[0][0].data.requestId);
+  });
+
   it('reports partial success, refreshes the list, and resumes only missing formats for the original target', async () => {
     api.create.mockResolvedValueOnce(job()).mockRejectedValueOnce(new Error('Queue is full.'));
     const { invalidate } = mount();
@@ -416,9 +477,9 @@ describe('MovieExports errors and retries', () => {
       [{ episodeId: episode.id, aspectRatio: '9:16' }],
     ]);
     expect(api.create.mock.calls.slice(2).map(([request]) => request)).toEqual([
-      { data: { episodeId: episode.id, aspectRatio: '16:9', quality: '1080p' } },
-      { data: { episodeId: episode.id, aspectRatio: '9:16', quality: '720p' } },
-      { data: { episodeId: episode.id, aspectRatio: '9:16', quality: '1080p' } },
+      { data: { episodeId: episode.id, aspectRatio: '16:9', quality: '1080p', requestId: expect.any(String) } },
+      { data: { episodeId: episode.id, aspectRatio: '9:16', quality: '720p', requestId: expect.any(String) } },
+      { data: { episodeId: episode.id, aspectRatio: '9:16', quality: '1080p', requestId: expect.any(String) } },
     ]);
     expect(screen.getByTestId('movie-batch-queued')).toHaveTextContent('16:9 · 720p, 16:9 · 1080p, 9:16 · 720p, 9:16 · 1080p');
     expect(screen.getByTestId('movie-batch-missing')).toHaveTextContent('None — all four formats are queued');
@@ -440,8 +501,8 @@ describe('MovieExports errors and retries', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Queue missing formats' }));
     await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(3));
     expect(api.create.mock.calls.slice(4).map(([request]) => request.data)).toEqual([
-      { episodeId: null, aspectRatio: '9:16', quality: '720p' },
-      { episodeId: null, aspectRatio: '9:16', quality: '1080p' },
+      { episodeId: null, aspectRatio: '9:16', quality: '720p', requestId: expect.any(String) },
+      { episodeId: null, aspectRatio: '9:16', quality: '1080p', requestId: expect.any(String) },
     ]);
   });
 
@@ -504,7 +565,7 @@ describe('MovieExports errors and retries', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Build again' }));
     await expectRefresh(invalidate);
     expect(api.create).toHaveBeenCalledExactlyOnceWith({
-      data: { episodeId, aspectRatio: '9:16', quality: '1080p' },
+      data: { episodeId, aspectRatio: '9:16', quality: '1080p', requestId: expect.any(String) },
     });
   });
 });

@@ -34,6 +34,13 @@ export const StudioExportInputQuality = {
 
 export interface StudioExportInput {
   /**
+     * Optional unique ID for this creation intent. Reuse with identical inputs after a lost response to retrieve the original job in any status, for as long as its history exists. Use a new ID for a deliberate new export. Requests without an ID retain legacy active-job deduplication.
+     * @minLength 1
+     * @maxLength 128
+     * @pattern ^[A-Za-z0-9_-]+$
+     */
+  requestId?: string;
+  /**
      * @minimum 1
      * @nullable
      */
