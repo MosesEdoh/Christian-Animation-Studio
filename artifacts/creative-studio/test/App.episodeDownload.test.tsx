@@ -55,6 +55,73 @@ beforeEach(() => {
 });
 
 describe('signed-in dashboard series ZIP wiring', () => {
+  it.each(['resolve', 'reject'])('cancels ZIP independently and ignores a late %s during retry', async completion => {
+    const cancelled = deferred<void>();
+    const retry = deferred<void>();
+    const assembling = deferred<Awaited<ReturnType<typeof downloadEpisodeVideo>>>();
+    vi.mocked(downloadSeriesPackage)
+      .mockReturnValueOnce(cancelled.promise)
+      .mockReturnValueOnce(retry.promise);
+    vi.mocked(downloadEpisodeVideo).mockReturnValue(assembling.promise);
+    render(<App />);
+    expect(screen.queryByRole('button', { name: 'Cancel ZIP export' })).not.toBeInTheDocument();
+    fireEvent.click(control(episode.id));
+    fireEvent.click(seriesControl());
+    const zipSignal = vi.mocked(downloadSeriesPackage).mock.calls[0][1]!;
+    const episodeSignal = vi.mocked(downloadEpisodeVideo).mock.calls[0][1]!;
+    expect(zipSignal).not.toBe(episodeSignal);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel ZIP export' }));
+    expect(zipSignal.aborted).toBe(true);
+    expect(episodeSignal.aborted).toBe(false);
+    expect(control(episode.id)).toBeDisabled();
+    expect(seriesControl()).toBeEnabled();
+    expect(screen.queryByRole('button', { name: 'Cancel ZIP export' })).not.toBeInTheDocument();
+    expect(screen.getByTestId('status-toast')).toHaveTextContent('Series ZIP export cancelled. You can try again.');
+    expect(screen.getByTestId('status-toast')).not.toHaveClass('error');
+
+    fireEvent.click(seriesControl());
+    const retrySignal = vi.mocked(downloadSeriesPackage).mock.calls[1][1]!;
+    expect(retrySignal).not.toBe(zipSignal);
+    expect(retrySignal.aborted).toBe(false);
+    await act(async () => {
+      if (completion === 'resolve') cancelled.resolve();
+      else cancelled.reject(new Error('Late failure'));
+    });
+    expect(seriesControl()).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Cancel ZIP export' })).toBeVisible();
+    expect(screen.queryByText(seriesSuccess)).not.toBeInTheDocument();
+    expect(screen.queryByText('Late failure')).not.toBeInTheDocument();
+    await act(async () => retry.resolve());
+    expect(seriesControl()).toBeEnabled();
+    expect(screen.getByTestId('status-toast')).toHaveTextContent(seriesSuccess);
+    expect(control(episode.id)).toBeDisabled();
+    await act(async () => assembling.resolve({ message: 'MP4 finished.', skippedClips: [] }));
+    expect(screen.getByTestId(`status-episode-download-${episode.id}`)).toHaveTextContent('MP4 finished.');
+  });
+
+  it('ignores an abort rejection without replacing the cancellation notice', async () => {
+    vi.mocked(downloadSeriesPackage).mockImplementation((_bootstrap, signal) => new Promise((_resolve, reject) => {
+      signal!.addEventListener('abort', () => reject(signal!.reason), { once: true });
+    }));
+    render(<App />);
+    fireEvent.click(seriesControl());
+    await act(async () => fireEvent.click(screen.getByRole('button', { name: 'Cancel ZIP export' })));
+    expect(seriesControl()).toBeEnabled();
+    expect(screen.getByTestId('status-toast')).toHaveTextContent('Series ZIP export cancelled. You can try again.');
+    expect(screen.getByTestId('status-toast')).not.toHaveClass('error');
+  });
+
+  it('aborts outstanding ZIP work when the studio unmounts', async () => {
+    const packing = deferred<void>();
+    vi.mocked(downloadSeriesPackage).mockReturnValue(packing.promise);
+    const { unmount } = render(<App />);
+    fireEvent.click(seriesControl());
+    const signal = vi.mocked(downloadSeriesPackage).mock.calls[0][1]!;
+    unmount();
+    expect(signal.aborted).toBe(true);
+    await act(async () => packing.resolve());
+  });
+
   it('packs the current bootstrap, blocks duplicate clicks, and reports success only after completion', async () => {
     const packing = deferred<void>();
     vi.mocked(downloadSeriesPackage).mockReturnValue(packing.promise);
@@ -73,7 +140,7 @@ describe('signed-in dashboard series ZIP wiring', () => {
     rerender(<App />);
     fireEvent.click(seriesControl());
 
-    expect(downloadSeriesPackage).toHaveBeenCalledExactlyOnceWith(refreshed);
+    expect(downloadSeriesPackage).toHaveBeenCalledExactlyOnceWith(refreshed, expect.any(AbortSignal));
     expect(vi.mocked(downloadSeriesPackage).mock.calls[0][0]).toBe(refreshed);
     expect(seriesControl()).toBeDisabled();
     expect(seriesControl()).toHaveAccessibleName('Packing…');
@@ -113,7 +180,7 @@ describe('signed-in dashboard series ZIP wiring', () => {
 
     fireEvent.click(seriesControl());
     expect(downloadSeriesPackage).toHaveBeenCalledTimes(2);
-    expect(downloadSeriesPackage).toHaveBeenNthCalledWith(2, state.data);
+    expect(downloadSeriesPackage).toHaveBeenNthCalledWith(2, state.data, expect.any(AbortSignal));
     expect(seriesControl()).toBeDisabled();
     expect(seriesControl()).toHaveAccessibleName('Packing…');
     expect(screen.queryByText(seriesSuccess)).not.toBeInTheDocument();
@@ -147,7 +214,7 @@ describe('signed-in dashboard series ZIP wiring', () => {
       expect(seriesControl()).toBeEnabled();
       fireEvent.click(seriesControl());
     }
-    expect(downloadSeriesPackage).toHaveBeenCalledExactlyOnceWith(state.data);
+    expect(downloadSeriesPackage).toHaveBeenCalledExactlyOnceWith(state.data, expect.any(AbortSignal));
     expect(downloadEpisodeVideo).toHaveBeenCalledExactlyOnceWith(episode, expect.any(AbortSignal));
     expect(seriesControl()).toBeDisabled();
     expect(seriesControl()).toHaveAccessibleName('Packing…');

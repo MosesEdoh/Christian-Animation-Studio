@@ -77,7 +77,7 @@ test('a ready archive contains a playable MP4, scripts, shot lists, and consiste
   assert.equal(entry.videoReport, `${folder()}/episode-video-report.txt`);
   assert.deepEqual(entry.usedClipIds, [1]);
   assert.deepEqual(entry.unavailableVideoClips, []);
-  assert.deepEqual(requests, [{ input: '/api/studio/episodes/1/video', init: { credentials: 'include' } }]);
+  assert.deepEqual(requests, [{ input: '/api/studio/episodes/1/video', init: { credentials: 'include', signal: undefined } }]);
 });
 
 test('shot lists and scripts use scene and shot numbers, not database IDs or array order', async () => {
@@ -183,8 +183,8 @@ test('failed provider URLs are retained as links, with private references includ
   assert.equal(strFromU8(files['references/0005-frame.png']), 'reference');
   assert.match(strFromU8(files['clip-links.txt']), /Clip 1.*https:\/\/provider.example\/expired.mp4/);
   assert.equal(files['clips/clip-0001.mp4'], undefined);
-  assert.deepEqual(calls[1], ['/api/storage/objects/reference', { credentials: 'include' }]);
-  assert.deepEqual(calls[2][1], { credentials: 'omit' });
+  assert.deepEqual(calls[1], ['/api/storage/objects/reference', { credentials: 'include', signal: undefined }]);
+  assert.deepEqual(calls[2][1], { credentials: 'omit', signal: undefined });
   assert.equal(assetSrc('/objects/a'), '/api/storage/objects/a');
 });
 
@@ -206,11 +206,77 @@ test('oversized raw provider clips fall back to links and private reference fail
   await assert.rejects(buildSeriesPackage(data, options), /Sign in again.*private reference/);
 });
 
+test('pre-cancelled packages reject before requesting any files', async () => {
+  const controller = new AbortController();
+  controller.abort();
+  const fetch = mock.method(globalThis, 'fetch', async () => mp4());
+  await assert.rejects(buildSeriesPackage(bootstrap(), { ...options, signal: controller.signal }), { name: 'AbortError' });
+  assert.equal(fetch.mock.callCount(), 0);
+});
+
+for (const stage of ['episode', 'reference', 'clip'] as const) {
+  for (const pending of ['request', 'body', 'late body'] as const) {
+    test(`cancellation stops ${stage} ${pending} without falling back or fetching more files`, async () => {
+      const data = bootstrap();
+      data.assets = [{
+        id: 5, projectId: 1, episodeId: null, sceneId: null, characterId: null,
+        kind: 'storyboard', objectPath: '/objects/reference', name: 'frame.png',
+        contentType: 'image/png', createdAt: '2026-01-01T00:00:00Z',
+      }];
+      data.clips[0].url = 'https://provider.example/clip.mp4';
+      data.clips.push(clip(2, 1, 'https://provider.example/next.mp4'));
+      const controller = new AbortController();
+      let started!: () => void;
+      const reached = new Promise<void>(resolve => { started = resolve; });
+      let finishLate!: () => void;
+      const wait = () => new Promise<never | ArrayBuffer>((resolve, reject) => {
+        finishLate = () => resolve(new ArrayBuffer(4));
+        controller.signal.addEventListener('abort', () => {
+          if (pending !== 'late body') reject(controller.signal.reason);
+        }, { once: true });
+        started();
+      });
+      const requests: string[] = [];
+      mock.method(globalThis, 'fetch', async (input: string | URL, init?: RequestInit) => {
+        assert.equal(init?.signal, controller.signal);
+        const path = String(input);
+        requests.push(path);
+        const target = stage === 'episode' ? path.includes('/video')
+          : stage === 'reference' ? path.includes('/api/storage') : path.startsWith('https://provider');
+        if (!target) return path.includes('/video') ? mp4() : new Response('reference');
+        if (pending === 'request') {
+          await wait();
+          throw new Error('Unreachable after abort');
+        }
+        const response = mp4();
+        if (stage === 'episode') {
+          mock.method(response, 'blob', async () => {
+            await wait();
+            return new Blob([playableVideo]);
+          });
+        } else {
+          mock.method(response, 'arrayBuffer', async () => await wait());
+        }
+        return response;
+      });
+      const packing = buildSeriesPackage(data, { ...options, signal: controller.signal });
+      const rejected = assert.rejects(packing, { name: 'AbortError' });
+      await reached;
+      const countAtCancellation = requests.length;
+      controller.abort();
+      if (pending === 'late body') finishLate();
+      await rejected;
+      assert.equal(requests.length, countAtCancellation);
+      assert.equal(requests.length, stage === 'episode' ? 1 : stage === 'reference' ? 2 : 3);
+    });
+  }
+}
+
 test('the download wrapper creates one ZIP download with a safe name and revokes its URL', async () => {
   let blob: Blob | undefined;
   const anchor = { href: '', download: '', click: mock.fn() };
   const revoke = mock.method(URL, 'revokeObjectURL', () => {});
-  mock.method(URL, 'createObjectURL', (value: Blob) => { blob = value; return 'blob:series'; });
+  const createUrl = mock.method(URL, 'createObjectURL', (value: Blob) => { blob = value; return 'blob:series'; });
   const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
   const previousDocument = Object.getOwnPropertyDescriptor(globalThis, 'document');
   Object.defineProperty(globalThis, 'window', { configurable: true, value: {
@@ -229,6 +295,16 @@ test('the download wrapper creates one ZIP download with a safe name and revokes
     assert.equal(blob?.type, 'application/zip');
     assert.ok(unzipSync(new Uint8Array(await blob!.arrayBuffer()))['series-manifest.json']);
     assert.equal(revoke.mock.calls[0].arguments[0], 'blob:series');
+
+    // The archive can finish before the wrapper resumes. Cancellation must
+    // still prevent a browser download at that final async boundary.
+    const empty = { ...bootstrap(), episodes: [], assets: [], clips: [] };
+    const controller = new AbortController();
+    const cancelledDownload = downloadSeriesPackage(empty, controller.signal);
+    controller.abort();
+    await assert.rejects(cancelledDownload, { name: 'AbortError' });
+    assert.equal(anchor.click.mock.callCount(), 1);
+    assert.equal(createUrl.mock.callCount(), 1);
   } finally {
     if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow);
     else Reflect.deleteProperty(globalThis, 'window');

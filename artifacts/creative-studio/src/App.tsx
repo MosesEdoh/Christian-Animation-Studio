@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { assetSrc, downloadSeriesPackage } from './lib/seriesPackage';
 import { useAuth } from '@workspace/replit-auth-web';
@@ -166,6 +166,11 @@ function StudioWorkspace({ authUser }: { authUser: AuthUser }) {
   } | null>(null);
   const authChecked = true;
   const [exportPending, setExportPending] = useState(false);
+  const seriesExportController = useRef<AbortController | null>(null);
+  useEffect(() => () => {
+    seriesExportController.current?.abort();
+    seriesExportController.current = null;
+  }, []);
   const [faithQuestion, setFaithQuestion] = useState('');
   const [faithAgeBand, setFaithAgeBand] = useState<'5-8' | '9-12' | '13-17'>('9-12');
   const [faithQuestionResult, setFaithQuestionResult] = useState<FaithQuestionStory | null>(null);
@@ -547,16 +552,30 @@ function StudioWorkspace({ authUser }: { authUser: AuthUser }) {
   };
 
   const exportSeries = async () => {
-    if (!bootstrap) return;
+    if (!bootstrap || seriesExportController.current) return;
+    const controller = new AbortController();
+    seriesExportController.current = controller;
     setExportPending(true);
     try {
-      await downloadSeriesPackage(bootstrap);
+      await downloadSeriesPackage(bootstrap, controller.signal);
+      if (controller.signal.aborted || seriesExportController.current !== controller) return;
       notify('Series package downloaded.');
     } catch (error) {
+      if (controller.signal.aborted || seriesExportController.current !== controller) return;
       notify(error instanceof Error ? error.message : 'The series package could not be created.', 'error');
     } finally {
-      setExportPending(false);
+      if (seriesExportController.current === controller) {
+        seriesExportController.current = null;
+        setExportPending(false);
+      }
     }
+  };
+
+  const cancelSeriesExport = () => {
+    seriesExportController.current?.abort();
+    seriesExportController.current = null;
+    setExportPending(false);
+    notify('Series ZIP export cancelled. You can try again.');
   };
 
   const saveProject = () => {
@@ -827,6 +846,7 @@ function StudioWorkspace({ authUser }: { authUser: AuthUser }) {
             bootstrap={bootstrap}
             exportSeries={exportSeries}
             exportPending={exportPending}
+            cancelSeriesExport={cancelSeriesExport}
             openProjectEditor={() => setShowProjectEditor(true)}
             openNewCharacter={openNewCharacter}
             openEditCharacter={openEditCharacter}
@@ -1003,6 +1023,7 @@ function DashboardView({
   bootstrap,
   exportSeries,
   exportPending,
+  cancelSeriesExport,
   openProjectEditor,
   openNewCharacter,
   openEditCharacter,
@@ -1014,6 +1035,7 @@ function DashboardView({
   bootstrap: StudioBootstrap;
   exportSeries: () => void;
   exportPending: boolean;
+  cancelSeriesExport: () => void;
   openProjectEditor: () => void;
   openNewCharacter: () => void;
   openEditCharacter: (character: Character) => void;
@@ -1065,6 +1087,11 @@ function DashboardView({
           <button type="button" className="btn btn-quiet" data-testid="button-export-series" onClick={exportSeries} disabled={exportPending}>
             <Film size={14} /> {exportPending ? 'Packing…' : 'Download series ZIP'}
           </button>
+          {exportPending && (
+            <button type="button" className="btn btn-quiet" data-testid="button-cancel-series-export" onClick={cancelSeriesExport}>
+              <X size={14} /> Cancel ZIP export
+            </button>
+          )}
           <button type="button" className="btn btn-quiet" data-testid="button-export-script" onClick={downloadScript}>
             <FileText size={14} /> Export .txt
           </button>

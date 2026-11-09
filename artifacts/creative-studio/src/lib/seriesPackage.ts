@@ -12,8 +12,10 @@ const safeName = (value: string) =>
 // Separate archive creation from the browser download so tests inspect the real ZIP.
 export async function buildSeriesPackage(
   bootstrap: StudioBootstrap,
-  options: { maxVideoBytes?: number; origin?: string } = {},
+  options: { maxVideoBytes?: number; origin?: string; signal?: AbortSignal } = {},
 ): Promise<Uint8Array<ArrayBuffer>> {
+  const { signal } = options;
+  signal?.throwIfAborted();
   const files: Record<string, Uint8Array> = {};
   const episodeVideoReports: string[] = [];
   const maxVideoBytes = options.maxVideoBytes ?? MAX_VIDEO_BYTES;
@@ -22,6 +24,7 @@ export async function buildSeriesPackage(
   const episodes: Array<Record<string, unknown>> = [];
 
   for (const episode of bootstrap.episodes) {
+    signal?.throwIfAborted();
     const episodeScenes = bootstrap.scenes
       .filter((scene) => scene.episodeId === episode.id)
       .sort((a, b) => a.number - b.number);
@@ -57,9 +60,12 @@ export async function buildSeriesPackage(
     try {
       const response = await fetch(`/api/studio/episodes/${episode.id}/video`, {
         credentials: 'include',
+        signal,
       });
+      signal?.throwIfAborted();
       if (response.ok) {
         const blob = await response.blob();
+        signal?.throwIfAborted();
         const encodedReport = response.headers.get('x-episode-video-report');
         if (encodedReport) {
           try {
@@ -84,6 +90,7 @@ export async function buildSeriesPackage(
           videoMessage = 'The series ZIP video-size limit was reached; this episode MP4 was not added.';
         } else {
           files[videoPath] = new Uint8Array(await blob.arrayBuffer());
+          signal?.throwIfAborted();
           packagedEpisodeVideoBytes += blob.size;
           includedVideoPath = videoPath;
           videoStatus = skippedClips.length ? 'partial' : 'ready';
@@ -96,10 +103,12 @@ export async function buildSeriesPackage(
           error?: string;
           skippedClips?: Array<{ clipId: number; provider: string; reason: string }>;
         };
+        signal?.throwIfAborted();
         videoMessage = failure.error ?? `Episode video export failed (${response.status}).`;
         skippedClips = failure.skippedClips ?? [];
       }
     } catch {
+      signal?.throwIfAborted();
       videoMessage = 'The episode video service could not be reached; no MP4 was included.';
     }
     if (!skippedClips.length && episodeClips.length) {
@@ -154,7 +163,9 @@ export async function buildSeriesPackage(
 
   const clipLinks: string[] = [];
   for (const asset of bootstrap.assets) {
-    const response = await fetch(assetSrc(asset.objectPath), { credentials: 'include' });
+    signal?.throwIfAborted();
+    const response = await fetch(assetSrc(asset.objectPath), { credentials: 'include', signal });
+    signal?.throwIfAborted();
     if (!response.ok) {
       throw new Error(response.status === 401
         ? 'Sign in again to include private reference images in the download.'
@@ -162,10 +173,12 @@ export async function buildSeriesPackage(
     }
     files[`references/${String(asset.id).padStart(4, '0')}-${safeName(asset.name)}`] =
       new Uint8Array(await response.arrayBuffer());
+    signal?.throwIfAborted();
   }
 
   let downloadedVideoBytes = 0;
   for (const clip of bootstrap.clips) {
+    signal?.throwIfAborted();
     if (!clip.url) continue;
     const fileName = `clip-${String(clip.id).padStart(4, '0')}`;
     try {
@@ -173,12 +186,14 @@ export async function buildSeriesPackage(
       if (clipUrl.protocol !== 'https:' && clipUrl.origin !== origin) {
         throw new Error('Unsupported video URL');
       }
-      const response = await fetch(clipUrl, { credentials: clipUrl.origin === origin ? 'include' : 'omit' });
+      const response = await fetch(clipUrl, { credentials: clipUrl.origin === origin ? 'include' : 'omit', signal });
+      signal?.throwIfAborted();
       const contentLength = Number(response.headers.get('content-length') ?? 0);
       if (!response.ok || (contentLength && downloadedVideoBytes + contentLength > maxVideoBytes)) {
         throw new Error('Video is not directly downloadable');
       }
       const bytes = new Uint8Array(await response.arrayBuffer());
+      signal?.throwIfAborted();
       if (!bytes.length || downloadedVideoBytes + bytes.length > maxVideoBytes) {
         throw new Error('Video is larger than the export limit');
       }
@@ -187,6 +202,7 @@ export async function buildSeriesPackage(
       const extension = mime.includes('webm') ? 'webm' : mime.includes('quicktime') ? 'mov' : 'mp4';
       files[`clips/${fileName}.${extension}`] = bytes;
     } catch {
+      signal?.throwIfAborted();
       clipLinks.push(`Clip ${clip.id} (${clip.provider}, ${clip.status}): ${clip.url}`);
     }
   }
@@ -194,15 +210,21 @@ export async function buildSeriesPackage(
   if (episodeVideoReports.length) {
     files['episode-video-reports.txt'] = strToU8(episodeVideoReports.join('\n'));
   }
+  signal?.throwIfAborted();
   return zipSync(files, { level: 6 });
 }
 
-export async function downloadSeriesPackage(bootstrap: StudioBootstrap): Promise<void> {
-  const archive = await buildSeriesPackage(bootstrap);
+export async function downloadSeriesPackage(bootstrap: StudioBootstrap, signal?: AbortSignal): Promise<void> {
+  const archive = await buildSeriesPackage(bootstrap, { signal });
+  signal?.throwIfAborted();
   const url = URL.createObjectURL(new Blob([archive], { type: 'application/zip' }));
   const anchor = document.createElement('a');
   anchor.href = url;
   anchor.download = `${safeName(bootstrap.project.title)}-series-package.zip`;
-  anchor.click();
-  window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  try {
+    signal?.throwIfAborted();
+    anchor.click();
+  } finally {
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
 }
