@@ -5,8 +5,9 @@ import { storePrivateMedia } from "./privateMedia";
 
 const GOOGLE_API_ORIGIN = "https://generativelanguage.googleapis.com";
 const GOOGLE_INTERACTIONS_URL = `${GOOGLE_API_ORIGIN}/v1beta/interactions`;
-const GOOGLE_VIDEO_MODEL = "gemini-omni-1.2-flash";
+const DEFAULT_GOOGLE_VIDEO_MODEL = "gemini-omni-1.2-flash";
 const MAX_GENERATED_VIDEO_BYTES = 150 * 1024 * 1024;
+const DEFAULT_VIDEO_MIN_INTERVAL_MS = 15_000;
 
 export type VideoAspectRatio = "16:9" | "9:16";
 export type VideoResolution = "720p" | "1080p";
@@ -36,6 +37,7 @@ export class VideoGenerationProviderError extends Error {
   constructor(
     message: string,
     public readonly statusCode = 502,
+    public readonly retryAfterSeconds?: number,
   ) {
     super(message);
     this.name = "VideoGenerationProviderError";
@@ -48,7 +50,53 @@ type ProviderDependencies = {
   fetcher?: Fetcher;
   wait?: (milliseconds: number, signal: AbortSignal) => Promise<void>;
   persist?: (localPath: string, signal?: AbortSignal) => Promise<string>;
+  admission?: VideoGenerationAdmission;
+  model?: string;
 };
+
+export class VideoGenerationAdmission {
+  private active = false;
+  private nextAllowedAt = 0;
+
+  constructor(
+    private readonly minIntervalMs: number,
+    private readonly now: () => number = Date.now,
+  ) {}
+
+  acquire(): () => void {
+    const currentTime = this.now();
+    if (this.active) {
+      throw new VideoGenerationProviderError(
+        "A video clip is already generating. Wait for it to finish, then try again.",
+        429,
+      );
+    }
+    if (currentTime < this.nextAllowedAt) {
+      const retryAfterSeconds = Math.ceil((this.nextAllowedAt - currentTime) / 1000);
+      throw new VideoGenerationProviderError(
+        `New video requests are being paced to protect Google quota. Try again in ${retryAfterSeconds} seconds.`,
+        429,
+        retryAfterSeconds,
+      );
+    }
+    this.active = true;
+    this.nextAllowedAt = currentTime + Math.max(0, this.minIntervalMs);
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      this.active = false;
+    };
+  }
+}
+
+function configuredMinIntervalMs(): number {
+  const configured = Number(process.env.GEMINI_VIDEO_MIN_INTERVAL_MS);
+  if (!Number.isFinite(configured) || configured < 0) return DEFAULT_VIDEO_MIN_INTERVAL_MS;
+  return Math.min(configured, 120_000);
+}
+
+const defaultVideoAdmission = new VideoGenerationAdmission(configuredMinIntervalMs());
 
 function defaultWait(milliseconds: number, signal: AbortSignal): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -200,6 +248,9 @@ export async function generateGoogleOmniVideoBytes(
     throw new VideoGenerationProviderError("Choose a supported video orientation and resolution.", 400);
   }
 
+  const model = dependencies.model?.trim()
+    || process.env.GEMINI_VIDEO_MODEL?.trim()
+    || DEFAULT_GOOGLE_VIDEO_MODEL;
   const fetcher = dependencies.fetcher ?? fetch;
   const signal = AbortSignal.any([
     AbortSignal.timeout(5 * 60_000),
@@ -222,7 +273,7 @@ export async function generateGoogleOmniVideoBytes(
       "x-goog-api-key": apiKey,
     },
     body: JSON.stringify({
-      model: GOOGLE_VIDEO_MODEL,
+      model,
       input: content,
       response_format: {
         type: "video",
@@ -288,22 +339,27 @@ export async function submitVideoGeneration(
       503,
     );
   }
-  const bytes = await generateGoogleOmniVideoBytes(input, dependencies);
-  const directory = await mkdtemp(join(tmpdir(), "frame-faith-google-video-"));
-  const localPath = join(directory, "generated.mp4");
+  const releaseAdmission = (dependencies.admission ?? defaultVideoAdmission).acquire();
   try {
-    await writeFile(localPath, bytes, { flag: "wx" });
-    const objectPath = await (dependencies.persist
-      ? dependencies.persist(localPath, input.signal)
-      : storePrivateMedia(localPath, "mp4", "video/mp4", input.signal));
-    return {
-      provider: "google-omni",
-      status: "ready",
-      url: objectPath.startsWith("/api/") ? objectPath : `/api/storage${objectPath}`,
-      thumbnailUrl: null,
-      duration: `${input.durationSeconds ?? 5}s`,
-    };
+    const bytes = await generateGoogleOmniVideoBytes(input, dependencies);
+    const directory = await mkdtemp(join(tmpdir(), "frame-faith-google-video-"));
+    const localPath = join(directory, "generated.mp4");
+    try {
+      await writeFile(localPath, bytes, { flag: "wx" });
+      const objectPath = await (dependencies.persist
+        ? dependencies.persist(localPath, input.signal)
+        : storePrivateMedia(localPath, "mp4", "video/mp4", input.signal));
+      return {
+        provider: "google-omni",
+        status: "ready",
+        url: objectPath.startsWith("/api/") ? objectPath : `/api/storage${objectPath}`,
+        thumbnailUrl: null,
+        duration: `${input.durationSeconds ?? 5}s`,
+      };
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   } finally {
-    await rm(directory, { recursive: true, force: true });
+    releaseAdmission();
   }
 }

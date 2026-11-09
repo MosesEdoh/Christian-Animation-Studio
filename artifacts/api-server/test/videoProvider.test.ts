@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   generateGoogleOmniVideoBytes,
   submitVideoGeneration,
+  VideoGenerationAdmission,
   VideoGenerationProviderError,
 } from "../src/lib/video-provider";
 
@@ -90,6 +91,41 @@ test("Google-hosted video files are polled until active and downloaded as MP4", 
   assert.equal(bytes.toString(), fakeMp4.toString());
 });
 
+test("video model selection remains configurable", async () => {
+  let requestedModel = "";
+  await generateGoogleOmniVideoBytes({ prompt: "A short clip." }, {
+    apiKey: "test-key",
+    model: "gemini-omni-test-model",
+    fetcher: async (_url, init) => {
+      requestedModel = JSON.parse(String(init?.body)).model;
+      return completedWithInlineVideo();
+    },
+  });
+  assert.equal(requestedModel, "gemini-omni-test-model");
+});
+
+test("video requests are serialized and paced between generations", () => {
+  let now = 1_000;
+  const admission = new VideoGenerationAdmission(15_000, () => now);
+  const release = admission.acquire();
+  assert.throws(
+    () => admission.acquire(),
+    (error: unknown) => error instanceof VideoGenerationProviderError && error.statusCode === 429,
+  );
+  release();
+  now = 5_000;
+  assert.throws(
+    () => admission.acquire(),
+    (error: unknown) =>
+      error instanceof VideoGenerationProviderError &&
+      error.retryAfterSeconds === 11 &&
+      /being paced/.test(error.message),
+  );
+  now = 16_000;
+  const releaseAgain = admission.acquire();
+  releaseAgain();
+});
+
 test("quota failures return an actionable message without exposing provider details", async () => {
   await assert.rejects(
     generateGoogleOmniVideoBytes({ prompt: "A short clip." }, {
@@ -135,6 +171,7 @@ test("generated MP4s are persisted privately and returned as protected app URLs"
   }, {
     apiKey: "test-key",
     fetcher: async () => completedWithInlineVideo(),
+    admission: new VideoGenerationAdmission(0),
     persist: async (path) => {
       savedBytes = await readFile(path);
       return "/objects/exports/clip-id.mp4";

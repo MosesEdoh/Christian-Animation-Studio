@@ -1086,6 +1086,9 @@ router.post("/studio/generation/shots", async (req, res): Promise<void> => {
       resolution: parsed.data.resolution ?? "720p",
     }, "Shot clip generation failed");
     if (error instanceof VideoGenerationProviderError) {
+      if (error.retryAfterSeconds) {
+        res.setHeader("Retry-After", String(error.retryAfterSeconds));
+      }
       res.status(error.statusCode).json({ error: error.message });
     } else {
       res.status(502).json({ error: "Google could not produce a playable video. Try again later." });
