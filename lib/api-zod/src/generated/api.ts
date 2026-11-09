@@ -69,6 +69,24 @@ export const CreateStudioExportResponse = zod.object({
 })
 
 
+
+
+
+export const PreflightStudioExportQueryParams = zod.object({
+  "episodeId": zod.coerce.number().int().min(1).optional().describe('Omit to check the entire series.'),
+  "aspectRatio": zod.enum(['16:9', '9:16'])
+})
+
+export const PreflightStudioExportResponse = zod.object({
+  "canQueue": zod.boolean(),
+  "message": zod.string(),
+  "cards": zod.int().nullable(),
+  "playbackSeconds": zod.number().nullable(),
+  "cardLimit": zod.int(),
+  "playbackLimitSeconds": zod.int()
+})
+
+
 /**
  * Requires approved studio access. Deletes ready, failed, or cancelled exports only. Deletes the stored MP4 before history; storage errors retain history for retry. A missing object or already removed export is a successful no-op.
  * @summary Permanently delete a finished storyboard movie and its history

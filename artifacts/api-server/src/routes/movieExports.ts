@@ -5,8 +5,22 @@ import { CreateStudioExportBody, CreateStudioExportResponse, ListStudioExportsRe
 import { cancelMovieExport, exportView, wakeMovieWorker } from "../lib/movieRenderer";
 import { ObjectNotFoundError, ObjectStorageService } from "../lib/objectStorage";
 import { streamPrivateMedia } from "../lib/privateMedia";
+import { PreflightStudioExportQueryParams, PreflightStudioExportResponse } from "@workspace/api-zod";
+import { estimateMovie } from "../lib/moviePreflight";
 
 const router = Router();
+router.get("/studio/exports/preflight", async (req, res): Promise<void> => {
+  const parsed = PreflightStudioExportQueryParams.safeParse(req.query);
+  if (!parsed.success) { res.status(400).json({ error: "Choose a valid episode and orientation." }); return; }
+  try {
+    const estimate = await estimateMovie(parsed.data.episodeId, parsed.data.aspectRatio);
+    if (!estimate) { res.status(404).json({ error: "Episode not found" }); return; }
+    res.json(PreflightStudioExportResponse.parse(estimate));
+  } catch (error) {
+    req.log.warn({ err: error }, "Movie estimate unavailable");
+    res.status(503).json({ error: "Could not check movie limits. Please try again before queueing." });
+  }
+});
 router.get("/studio/exports", async (_req, res): Promise<void> => {
   const rows = await db.select().from(studioExportsTable).orderBy(desc(studioExportsTable.id)).limit(100);
   res.json(ListStudioExportsResponse.parse(rows.map(exportView)));

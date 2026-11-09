@@ -9,6 +9,7 @@ import { logger } from "./logger";
 import { movieImage, runMovieEncoder } from "./movieWork";
 import { MovieBudget, MovieBudgetError, movieLimits, movieLookup, movieOperation, smallerMovie } from "./movieBudget";
 import { MovieTemporaryStorage, MOVIE_RENDER_LEASE_MS } from "./movieTemporaryStorage";
+import { wrapMovieText as wrap, movieScenePages, moviePageSeconds } from "./movieLayout";
 
 export const movieDb = createBoundedDatabase();
 const temporaryStorage = new MovieTemporaryStorage();
@@ -53,27 +54,6 @@ export const exportView = (row: ExportRow) => ({
   ...row, url: row.status === "ready" && row.objectPath ? `/api/studio/exports/${row.id}/file` : null,
 });
 const xml = (value: string) => value.replace(/[<>&"']/g, char => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&apos;" }[char]!));
-function wrap(text: string, width: number, maxLines = movieLimits.frames * 18) {
-  // Reject before split/word wrapping can allocate unbounded arrays.
-  if (text.length > maxLines * (width + 2)) throw new MovieBudgetError(`Movie script text is too large. ${smallerMovie}`);
-  const lines: string[] = [];
-  for (const paragraph of text.replace(/\r/g, "").split("\n")) {
-    if (!paragraph.trim()) { lines.push(""); continue; }
-    let line = "";
-    for (let word of paragraph.split(/\s+/)) {
-      while (word.length > width) {
-        if (line) { lines.push(line); line = ""; }
-        lines.push(word.slice(0, width)); word = word.slice(width);
-      }
-      if (line && `${line} ${word}`.length > width) { lines.push(line); line = word; }
-      else line = line ? `${line} ${word}` : word;
-    }
-    if (line) lines.push(line);
-    if (lines.length > maxLines) throw new MovieBudgetError(`Movie script text is too large. ${smallerMovie}`);
-  }
-  return lines;
-}
-const seconds = (duration: string) => duration.split(":").reduce((total, part) => total * 60 + Number(part), 0) || 60;
 
 async function render(row: ExportRow, budget: MovieBudget) {
   const signal = budget.signal;
@@ -113,9 +93,7 @@ async function render(row: ExportRow, budget: MovieBudget) {
       for (const scene of episodeScenes) {
         signal.throwIfAborted();
         const sceneShots = shots.filter(shot => shot.sceneId === scene.id);
-        const lines = wrap(scene.content || scene.synopsis, portrait ? 46 : 43);
-        const pageSize = portrait ? 18 : 13;
-        const pageCount = Math.max(1, Math.ceil(lines.length / pageSize));
+        const { lines, pageSize, pageCount } = movieScenePages(scene, portrait);
         budget.checkFrames(frames.length + pageCount + 1);
         for (let page = 0; page < pageCount; page++) {
           const shot = sceneShots[Math.min(sceneShots.length - 1, Math.floor(page * sceneShots.length / pageCount))];
@@ -125,7 +103,7 @@ async function render(row: ExportRow, budget: MovieBudget) {
             label: `EPISODE ${episode.number} · SCENE ${scene.number} · CARD ${page + 1}/${pageCount}`,
             title: scene.heading,
             lines: pageLines, image: reference?.startsWith("/objects/") ? reference : null,
-            seconds: Math.max(seconds(scene.duration) / pageCount, pageLines.join(" ").length / 15, 5),
+            seconds: moviePageSeconds(scene.duration, pageCount, pageLines),
             shot: shot ? `${shot.shotType} · ${shot.movement} · ${shot.beat}` : scene.synopsis,
           });
         }

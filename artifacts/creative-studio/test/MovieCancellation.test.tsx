@@ -9,6 +9,8 @@ const api = vi.hoisted(() => ({
 }));
 vi.mock('@workspace/api-client-react', async importOriginal => ({
   ...await importOriginal<object>(),
+  preflightStudioExport: vi.fn(async () => ({ canQueue: true })),
+  usePreflightStudioExport: () => ({ data: { canQueue: true, cards: 1, cardLimit: 2000, playbackSeconds: 10, playbackLimitSeconds: 21600 }, isPending: false, isError: false }),
   useListStudioExports: () => ({ data: api.jobs, isError: false }),
   useCreateStudioExport: () => ({ mutateAsync: api.create, isPending: false }),
   useCancelStudioExport: () => ({ mutateAsync: api.cancel }),

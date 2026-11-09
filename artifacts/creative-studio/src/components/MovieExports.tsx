@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { useCancelStudioExport, useCreateStudioExport, useDeleteStudioExport, useListStudioExports, getListStudioExportsQueryKey, type Episode, type StudioExport } from '@workspace/api-client-react';
+import { useRef, useState } from 'react';
+import { getPreflightStudioExportQueryKey, preflightStudioExport, usePreflightStudioExport, useCancelStudioExport, useCreateStudioExport, useDeleteStudioExport, useListStudioExports, getListStudioExportsQueryKey, type Episode, type StudioExport } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
 
 export function MovieExports({ episodes }: { episodes: Episode[] }) {
@@ -9,6 +9,16 @@ export function MovieExports({ episodes }: { episodes: Episode[] }) {
   const [quality, setQuality] = useState<'720p' | '1080p'>('720p');
   const [error, setError] = useState('');
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const [queueing, setQueueing] = useState(false);
+  const queueLock = useRef(false);
+  const estimateParams = {
+    ...(episodeId === 'series' ? {} : { episodeId: Number(episodeId) }),
+    aspectRatio,
+  };
+  const estimate = usePreflightStudioExport(estimateParams, { query: {
+    queryKey: getPreflightStudioExportQueryKey(estimateParams),
+    staleTime: 0, refetchInterval: 30_000, retry: false,
+  } });
   const jobs = useListStudioExports({ query: { queryKey: getListStudioExportsQueryKey(), refetchInterval: 3000 } });
   const create = useCreateStudioExport();
   const cancel = useCancelStudioExport();
@@ -50,16 +60,29 @@ export function MovieExports({ episodes }: { episodes: Episode[] }) {
   const ready = (jobs.data ?? []).filter(job => job.status === 'ready' && job.url);
   const selected = ready.find(job => job.id === selectedId) ?? ready[0];
   async function queue(all: boolean, retry?: { episodeId: number | null; aspectRatio: '16:9' | '9:16'; quality: '720p' | '1080p' }) {
+    if (queueLock.current) return;
+    queueLock.current = true;
+    setQueueing(true);
     setError('');
     try {
+      const targetId = retry ? retry.episodeId : episodeId === 'series' ? null : Number(episodeId);
       const formats = retry ? [{ aspectRatio: retry.aspectRatio, quality: retry.quality }] : all
         ? (['16:9', '9:16'] as const).flatMap(ratio => (['720p', '1080p'] as const).map(size => ({ aspectRatio: ratio, quality: size })))
         : [{ aspectRatio, quality }];
+      // Refresh before queueing, including retries of a different selection.
+      // Check every orientation before creating any of the batch's jobs.
+      for (const ratio of new Set(formats.map(format => format.aspectRatio))) {
+        const check = await preflightStudioExport({
+          ...(targetId === null ? {} : { episodeId: targetId }), aspectRatio: ratio,
+        });
+        if (!check.canQueue) { setError(check.message); return; }
+      }
       for (const format of formats) {
-        await create.mutateAsync({ data: { episodeId: retry ? retry.episodeId : episodeId === 'series' ? null : Number(episodeId), ...format } });
+        await create.mutateAsync({ data: { episodeId: targetId, ...format } });
       }
       await cache.invalidateQueries({ queryKey: getListStudioExportsQueryKey() });
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not queue movie.'); }
+    finally { queueLock.current = false; setQueueing(false); }
   }
   return <section className="panel" style={{ marginTop: 24, padding: 24 }} data-testid="movie-exports">
     <span className="eyebrow">WATCHABLE EXPORTS</span>
@@ -70,9 +93,15 @@ export function MovieExports({ episodes }: { episodes: Episode[] }) {
       <div className="field"><label htmlFor="movie-ratio">Orientation</label><select id="movie-ratio" value={aspectRatio} onChange={event => setAspectRatio(event.target.value as '16:9' | '9:16')}><option>16:9</option><option>9:16</option></select></div>
       <div className="field"><label htmlFor="movie-quality">Resolution</label><select id="movie-quality" value={quality} onChange={event => setQuality(event.target.value as '720p' | '1080p')}><option>720p</option><option>1080p</option></select></div>
     </div>
+    <div aria-live="polite" style={{ marginTop: 12 }} data-testid="movie-preflight">
+      {estimate.isPending && <p>Checking saved scripts against movie limits…</p>}
+      {estimate.isError && <p role="alert">Could not check movie limits. <button onClick={() => estimate.refetch()}>Check again</button></p>}
+      {estimate.data && <p>{estimate.data.message}{estimate.data.canQueue && <> Estimated {estimate.data.cards?.toLocaleString()} / {estimate.data.cardLimit.toLocaleString()} cards · {Math.ceil((estimate.data.playbackSeconds ?? 0) / 60)} minutes / {estimate.data.playbackLimitSeconds / 3600} hours.</>}</p>}
+      <p className="row-caption">Limits apply to each MP4, in either resolution. All four formats checks both orientations before queueing. Movies are never automatically split or shortened. This estimate uses saved scripts only; scripts and references can change, so rendering still checks card, playback, image, storage, and processing limits. A passing estimate does not guarantee a finished export.</p>
+    </div>
     <div className="video-actions" style={{ marginTop: 12 }}>
-      <button className="btn btn-primary" data-testid="create-movie" onClick={() => queue(false)} disabled={create.isPending}>Build storyboard MP4</button>
-      <button className="btn btn-quiet" onClick={() => queue(true)} disabled={create.isPending}>Build all four formats</button>
+      <button className="btn btn-primary" data-testid="create-movie" onClick={() => queue(false)} disabled={queueing || estimate.isPending || estimate.isError || !estimate.data?.canQueue}>Build storyboard MP4</button>
+      <button className="btn btn-quiet" onClick={() => queue(true)} disabled={queueing || estimate.isPending || estimate.isError || !estimate.data?.canQueue}>Build all four formats</button>
     </div>
     {error && <p role="alert">{error}</p>}
     {jobs.isError && <p role="alert">Could not load movie exports. <button onClick={() => jobs.refetch()}>Retry</button></p>}
@@ -86,7 +115,7 @@ export function MovieExports({ episodes }: { episodes: Episode[] }) {
       {(jobs.data ?? []).map(job => <p key={job.id} data-testid={`movie-job-${job.id}`}>
         #{job.id} · {job.episodeId ? `Episode ${episodes.find(episode => episode.id === job.episodeId)?.number ?? job.episodeId}` : 'Entire series'} · {job.aspectRatio} · {job.quality} — {job.status}{job.status === 'rendering' ? ` ${job.progress}%` : ''}
         {(job.status === 'queued' || job.status === 'rendering') && <> · <button disabled={cancellingId !== null} data-testid={`cancel-movie-${job.id}`} onClick={() => cancelJob(job.id)}>{cancellingId === job.id ? 'Cancelling…' : 'Cancel movie'}</button></>}
-        {(job.status === 'failed' || job.status === 'cancelled') && <> · {job.status === 'cancelled' ? 'Cancelled. No movie was saved.' : job.error} <button disabled={create.isPending} onClick={() => queue(false, job)}>Build again</button></>}
+        {(job.status === 'failed' || job.status === 'cancelled') && <> · {job.status === 'cancelled' ? 'Cancelled. No movie was saved.' : job.error} <button disabled={queueing} onClick={() => queue(false, job)}>Build again</button></>}
         {(['ready', 'failed', 'cancelled'] as const).some(status => status === job.status) && <> · <button disabled={deletingId !== null} data-testid={`delete-movie-${job.id}`} onClick={() => deleteJob(job)}>{deletingId === job.id ? 'Deleting…' : 'Delete movie'}</button></>}
       </p>)}
     </div>

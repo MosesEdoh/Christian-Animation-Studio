@@ -25,6 +25,17 @@ export interface LogoutSuccess {
   success: boolean;
 }
 
+export interface StudioExportPreflight {
+  canQueue: boolean;
+  message: string;
+  /** @nullable */
+  cards: number | null;
+  /** @nullable */
+  playbackSeconds: number | null;
+  cardLimit: number;
+  playbackLimitSeconds: number;
+}
+
 export type StudioExportInputAspectRatio = typeof StudioExportInputAspectRatio[keyof typeof StudioExportInputAspectRatio];
 
 
@@ -480,6 +491,23 @@ export interface ShotGenerationInput {
   /** @nullable */
   provider?: string | null;
 }
+
+export type PreflightStudioExportParams = {
+/**
+ * Omit to check the entire series.
+ * @minimum 1
+ */
+episodeId?: number;
+aspectRatio: PreflightStudioExportAspectRatio;
+};
+
+export type PreflightStudioExportAspectRatio = typeof PreflightStudioExportAspectRatio[keyof typeof PreflightStudioExportAspectRatio];
+
+
+export const PreflightStudioExportAspectRatio = {
+  '16:9': '16:9',
+  '9:16': '9:16',
+} as const;
 
 export type DownloadStudioEpisodeVideo503Code = typeof DownloadStudioEpisodeVideo503Code[keyof typeof DownloadStudioEpisodeVideo503Code];
 

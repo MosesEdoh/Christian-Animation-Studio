@@ -10,11 +10,18 @@ const api = vi.hoisted(() => ({
   refetch: vi.fn(),
   jobs: [] as StudioExport[],
   listError: false,
+  preflight: vi.fn(),
+  estimate: { canQueue: true, message: 'Entire series fits the card and playback limits for the saved scripts.', cards: 12, playbackSeconds: 90, cardLimit: 2000, playbackLimitSeconds: 21600 },
+  checking: false,
+  estimateError: false,
 }));
 
 vi.mock('@workspace/api-client-react', async () => {
   const { useMutation } = await import('@tanstack/react-query');
   return {
+    preflightStudioExport: api.preflight,
+    getPreflightStudioExportQueryKey: (params: unknown) => ['/api/studio/exports/preflight', params],
+    usePreflightStudioExport: () => ({ data: api.estimate, isPending: api.checking, isError: api.estimateError, refetch: api.refetch }),
     getListStudioExportsQueryKey: () => ['/api/studio/exports'],
     useListStudioExports: () => ({
       data: api.jobs, isError: api.listError, refetch: api.refetch,
@@ -82,6 +89,64 @@ beforeEach(() => {
   api.listError = false;
   api.create.mockReset().mockResolvedValue(job());
   api.refetch.mockReset();
+  api.estimate = { canQueue: true, message: 'Entire series fits the card and playback limits for the saved scripts.', cards: 12, playbackSeconds: 90, cardLimit: 2000, playbackLimitSeconds: 21600 };
+  api.preflight.mockReset().mockImplementation(async () => api.estimate);
+  api.checking = api.estimateError = false;
+});
+
+describe('MovieExports preflight', () => {
+  it('shows the saved-script estimate and explains remaining render checks', () => {
+    mount();
+    expect(screen.getByTestId('movie-preflight')).toHaveTextContent('12 / 2,000 cards');
+    expect(screen.getByTestId('movie-preflight')).toHaveTextContent('never automatically split or shortened');
+    expect(screen.getByTestId('movie-preflight')).toHaveTextContent('does not guarantee a finished export');
+  });
+
+  it.each(['checking', 'estimateError', 'blocked'])('does not queue while preflight is %s', state => {
+    if (state === 'checking') api.checking = true;
+    else if (state === 'estimateError') api.estimateError = true;
+    else api.estimate = { ...api.estimate, canQueue: false, message: 'Entire series exceeds the 2000 storyboard card limit. Choose an episode and export episodes separately.' };
+    mount();
+    expect(build()).toBeDisabled();
+    expect(buildAll()).toBeDisabled();
+    if (state === 'blocked') expect(screen.getByTestId('movie-preflight')).toHaveTextContent('export episodes separately');
+    fireEvent.click(build());
+    expect(api.create).not.toHaveBeenCalled();
+  });
+
+  it('checks both orientations before queueing any format and blocks the whole batch', async () => {
+    api.preflight.mockResolvedValueOnce(api.estimate).mockResolvedValueOnce({
+      ...api.estimate, canQueue: false, message: 'Portrait exceeds the 6 hour playback limit.',
+    });
+    mount();
+    select('Episode or series', String(episode.id));
+    fireEvent.click(buildAll());
+    expect(await screen.findByRole('alert')).toHaveTextContent('6 hour playback limit');
+    expect(api.preflight.mock.calls).toEqual([
+      [{ episodeId: episode.id, aspectRatio: '16:9' }],
+      [{ episodeId: episode.id, aspectRatio: '9:16' }],
+    ]);
+    expect(api.create).not.toHaveBeenCalled();
+  });
+
+  it('rechecks the retry target rather than using the current form estimate', async () => {
+    api.jobs = [job({ status: 'failed', episodeId: episode.id, aspectRatio: '9:16' })];
+    api.preflight.mockResolvedValueOnce({ ...api.estimate, canQueue: false, message: 'This episode exceeds the card limit.' });
+    mount();
+    fireEvent.click(screen.getByRole('button', { name: 'Build again' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('This episode exceeds');
+    expect(api.preflight).toHaveBeenCalledExactlyOnceWith({ episodeId: episode.id, aspectRatio: '9:16' });
+    expect(api.create).not.toHaveBeenCalled();
+  });
+
+  it('fails closed if the fresh estimate is unavailable', async () => {
+    api.preflight.mockRejectedValueOnce(new Error('Could not check movie limits.'));
+    mount();
+    fireEvent.click(build());
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not check movie limits.');
+    expect(api.create).not.toHaveBeenCalled();
+    await waitFor(() => expect(build()).toBeEnabled());
+  });
 });
 
 describe('MovieExports queue controls', () => {

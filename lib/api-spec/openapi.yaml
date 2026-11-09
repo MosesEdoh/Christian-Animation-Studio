@@ -70,6 +70,31 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/StudioExport" }
+  /studio/exports/preflight:
+    get:
+      operationId: preflightStudioExport
+      tags: [studio]
+      parameters:
+        - in: query
+          name: episodeId
+          schema: { type: integer, minimum: 1 }
+          description: Omit to check the entire series.
+        - in: query
+          name: aspectRatio
+          required: true
+          schema: { type: string, enum: ["16:9", "9:16"] }
+      responses:
+        "200":
+          description: Bounded estimate of saved scripts; rendering still enforces all limits.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StudioExportPreflight" }
+        "400":
+          description: Invalid selection
+        "404":
+          description: Episode not found
+        "503":
+          description: Estimate temporarily unavailable
   /studio/exports/{id}:
     delete:
       operationId: deleteStudioExport
@@ -602,6 +627,16 @@ components:
       required: [success]
       properties:
         success: { type: boolean }
+    StudioExportPreflight:
+      type: object
+      required: [canQueue, message, cards, playbackSeconds, cardLimit, playbackLimitSeconds]
+      properties:
+        canQueue: { type: boolean }
+        message: { type: string }
+        cards: { type: ["integer", "null"] }
+        playbackSeconds: { type: ["number", "null"] }
+        cardLimit: { type: integer }
+        playbackLimitSeconds: { type: integer }
     StudioExportInput:
       type: object
       required: [episodeId, aspectRatio, quality]

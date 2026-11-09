@@ -44,6 +44,7 @@ import type {
   LogoutSuccess,
   MobileSession,
   MobileTokenExchangeInput,
+  PreflightStudioExportParams,
   Project,
   ProjectUpdate,
   Scene,
@@ -60,6 +61,7 @@ import type {
   StudioBootstrap,
   StudioExport,
   StudioExportInput,
+  StudioExportPreflight,
   UploadUrlRequest,
   UploadUrlResponse
 } from './api.schemas';
@@ -393,6 +395,84 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       > => {
       return useMutation(getCreateStudioExportMutationOptions(options));
     }
+
+export const getPreflightStudioExportUrl = (params: PreflightStudioExportParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/studio/exports/preflight?${stringifiedParams}` : `/api/studio/exports/preflight`
+}
+
+export const preflightStudioExport = async (params: PreflightStudioExportParams, options?: Parameters<typeof customFetch>[1]): Promise<StudioExportPreflight> => {
+
+  return customFetch<StudioExportPreflight>(getPreflightStudioExportUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getPreflightStudioExportQueryKey = (params?: PreflightStudioExportParams,) => {
+    return [
+    `/api/studio/exports/preflight`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getPreflightStudioExportQueryOptions = <TData = Awaited<ReturnType<typeof preflightStudioExport>>, TError = ErrorType<void>>(params: PreflightStudioExportParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof preflightStudioExport>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getPreflightStudioExportQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof preflightStudioExport>>> = ({ signal }) => preflightStudioExport(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof preflightStudioExport>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type PreflightStudioExportQueryResult = NonNullable<Awaited<ReturnType<typeof preflightStudioExport>>>
+export type PreflightStudioExportQueryError = ErrorType<void>
+
+
+
+export function usePreflightStudioExport<TData = Awaited<ReturnType<typeof preflightStudioExport>>, TError = ErrorType<void>>(
+ params: PreflightStudioExportParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof preflightStudioExport>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getPreflightStudioExportQueryOptions(params,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export const getDeleteStudioExportUrl = (id: number,) => {
 
