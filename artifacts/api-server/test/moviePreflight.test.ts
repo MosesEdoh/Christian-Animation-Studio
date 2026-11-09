@@ -10,6 +10,8 @@ const { db, studioEpisodesTable, studioScenesTable } = await import("@workspace/
 const { preflightDb, estimateMovie } = await import("../src/lib/moviePreflight");
 const { default: routes } = await import("../src/routes/index");
 const { movieScenePages, moviePageSeconds } = await import("../src/lib/movieLayout");
+const { movieLimits } = await import("../src/lib/movieBudget");
+const textBudget = movieLimits.frames * 18 * 48;
 const dialect = new PgDialect();
 let episodes: { id: number; summary: string }[];
 let scenes: { id: number; episodeId: number; duration: string; text: string }[];
@@ -17,6 +19,11 @@ let signedIn: boolean;
 let approved: boolean;
 let reads: number;
 let fail: boolean;
+let readDelayMs: number;
+let allocatedText: number;
+let textReads: number;
+let beforeTextRead: (() => void) | undefined;
+const length = (text: string) => Array.from(text).length;
 
 beforeEach(() => {
   mock.method(db, "select", () => ({ from: () => ({ where: () => ({ limit: async () => [{ id: "creator" }] }) }) }));
@@ -24,6 +31,8 @@ beforeEach(() => {
   scenes = [{ id: 1, episodeId: 7, duration: "1:00", text: "Hello world." }];
   signedIn = approved = true;
   reads = 0; fail = false;
+  readDelayMs = allocatedText = textReads = 0;
+  beforeTextRead = undefined;
   mock.method(preflightDb, "select", (projection: Record<string, unknown>) => ({
     from: (table: unknown) => ({
       where: (predicate?: SQL) => {
@@ -31,13 +40,32 @@ beforeEach(() => {
         const limit = async (count: number) => {
           reads++;
           if (fail) throw new Error("Database unavailable");
+          if (readDelayMs) await new Promise(resolve => setTimeout(resolve, readDelayMs));
           if (table === studioEpisodesTable) return episodes.filter(row => !values.length || values.includes(row.id)).slice(0, count);
           assert.equal(table, studioScenesTable);
           if ("text" in projection) {
-            const cap = Number(dialect.sqlToQuery(projection.text as SQL).params.at(-1));
-            return scenes.filter(row => values.includes(row.id)).slice(0, count).map(row => ({ text: row.text.slice(0, cap) }));
+            textReads++;
+            beforeTextRead?.();
+            const params = dialect.sqlToQuery(projection.text as SQL).params;
+            const caps = new Map<number, number>();
+            for (let index = 0; index < params.length; index += 2) {
+              caps.set(Number(params[index]), Number(params[index + 1]));
+            }
+            assert.ok(count <= 100, "script batch has a strict row bound");
+            assert.equal(caps.size, count);
+            allocatedText += [...caps.values()].reduce((sum, cap) => sum + cap, 0);
+            assert.ok(allocatedText <= textBudget, "aggregate text caps stay within one budget across all batches");
+            assert.deepEqual(Object.keys(projection).sort(), ["id", "scriptLength", "text"], "never fetch reference URLs or files");
+            return scenes.filter(row => values.includes(row.id)).slice(0, count).reverse().map(row => ({
+              id: row.id,
+              scriptLength: Math.min(length(row.text), textBudget + 1),
+              text: Array.from(row.text).slice(0, caps.get(row.id) ?? 0).join(""),
+            }));
           }
-          return scenes.filter(row => values.includes(row.episodeId)).slice(0, count);
+          assert.equal(count, movieLimits.frames + 1);
+          return scenes.filter(row => values.includes(row.episodeId)).slice(0, count).map(row => ({
+            ...row, scriptLength: Math.min(length(row.text), textBudget + 1),
+          }));
         };
         return { limit, orderBy: () => ({ limit }) };
       },
@@ -108,6 +136,87 @@ test("bounds large script text and handles missing or incomplete episodes", asyn
   scenes = [];
   assert.match((await estimateMovie(7, "16:9"))!.message, /complete each selected episode/);
   assert.equal(await estimateMovie(999, "16:9"), null);
+});
+
+test("many short scenes fit within the original deadline using bounded batches", async () => {
+  mock.method(globalThis, "fetch", () => { throw new Error("Preflight must not download references"); });
+  episodes = Array.from({ length: 9 }, (_, index) => ({ id: index + 1, summary: "An episode." }));
+  scenes = Array.from({ length: 1990 }, (_, index) => ({
+    id: index + 1, episodeId: index % 9 + 1, duration: "1", text: `Scene ${index + 1}.`,
+  }));
+  // Per-scene reads would need over 15 seconds; batches need just 22 reads.
+  readDelayMs = 8;
+  const result = await estimateMovie(undefined, "16:9");
+  assert.equal(result?.canQueue, true);
+  assert.equal(result?.cards, 2000);
+  assert.equal(result?.playbackSeconds, 9 * 6 + 7 + 1990 * 5);
+  assert.equal(textReads, 20);
+  assert.equal(reads, 22);
+});
+
+test("rejects aggregate text overflow before fetching any scene scripts", async () => {
+  scenes = Array.from({ length: 100 }, (_, index) => ({
+    id: index + 1, episodeId: 7, duration: "1", text: "a".repeat(Math.floor(textBudget / 100) + 1),
+  }));
+  const result = await estimateMovie(7, "16:9");
+  assert.equal(result?.canQueue, false);
+  assert.match(result!.message, /saved script text exceeds/);
+  assert.equal(reads, 2);
+  assert.equal(textReads, 0);
+});
+
+test("rejects oversized scene metadata without reading script content", async () => {
+  scenes = Array.from({ length: 2001 }, (_, index) => ({
+    id: index + 1, episodeId: 7, duration: "1", text: "Short.",
+  }));
+  const result = await estimateMovie(7, "16:9");
+  assert.equal(result?.canQueue, false);
+  assert.match(result!.message, /2000 storyboard card limit/);
+  assert.equal(reads, 2);
+  assert.equal(textReads, 0);
+});
+
+test("text caps accommodate uneven scene lengths without truncating a valid script", async () => {
+  scenes = Array.from({ length: 101 }, (_, index) => ({
+    id: index + 1, episodeId: 7, duration: "1", text: index === 0 ? "Long dialogue ".repeat(5000) : "Short.",
+  }));
+  for (const aspectRatio of ["16:9", "9:16"] as const) {
+    allocatedText = 0;
+    const result = await estimateMovie(7, aspectRatio);
+    const layout = movieScenePages({ content: scenes[0]!.text, synopsis: "" }, aspectRatio === "9:16");
+    assert.equal(result?.canQueue, true);
+    assert.equal(result?.cards, 102 + layout.pageCount);
+    assert.equal(allocatedText, scenes.reduce((total, scene) => total + length(scene.text), 0));
+  }
+});
+
+test("rejects growing or deleted scripts rather than estimating capped or missing text", async () => {
+  for (const change of [() => { scenes[0]!.text += " More dialogue."; }, () => { scenes = []; }]) {
+    scenes = [{ id: 1, episodeId: 7, duration: "1", text: "Original." }];
+    beforeTextRead = change;
+    const result = await estimateMovie(7, "16:9");
+    assert.equal(result?.canQueue, false);
+    assert.match(result!.message, /script changed.*Check again/);
+    allocatedText = 0;
+  }
+});
+
+test("all batches share the five-second deadline and stop on cancellation", async () => {
+  const controller = new AbortController();
+  const timeout = mock.method(AbortSignal, "timeout", (milliseconds: number) => {
+    assert.equal(milliseconds, 5000);
+    return controller.signal;
+  });
+  scenes = Array.from({ length: 201 }, (_, index) => ({
+    id: index + 1, episodeId: 7, duration: "1", text: "Short.",
+  }));
+  beforeTextRead = () => {
+    if (textReads === 2) controller.abort(new Error("Overall deadline expired"));
+  };
+  await assert.rejects(estimateMovie(7, "16:9"), /Overall deadline expired/);
+  assert.equal(timeout.mock.callCount(), 1);
+  assert.equal(textReads, 2);
+  assert.equal(reads, 4);
 });
 
 async function request(query: string) {
