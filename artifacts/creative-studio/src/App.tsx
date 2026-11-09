@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/reac
 import { assetSrc, downloadSeriesPackage } from './lib/seriesPackage';
 import { useAuth } from '@workspace/replit-auth-web';
 import { MovieExports } from './components/MovieExports';
+import { EpisodeDownload } from './components/EpisodeDownload';
 import {
   AlertTriangle,
   Aperture,
@@ -1018,6 +1019,13 @@ function DashboardView({
   openEditCharacter: (character: Character) => void;
 }) {
   const activeEpisode = episodes.find((episode) => episode.id === project?.activeEpisodeId) ?? episodes[0];
+  const downloadableEpisodeIds = useMemo(() => {
+    const sceneEpisodes = new Map(bootstrap.scenes.map((scene) => [scene.id, scene.episodeId]));
+    const shotEpisodes = new Map(bootstrap.shots.map((shot) => [shot.id, sceneEpisodes.get(shot.sceneId)]));
+    return new Set(bootstrap.clips
+      .filter((clip) => clip.status === 'ready' && Boolean(clip.url))
+      .map((clip) => shotEpisodes.get(clip.shotId)));
+  }, [bootstrap.scenes, bootstrap.shots, bootstrap.clips]);
   const totalProgress = episodes.length
     ? Math.round(episodes.reduce((sum, episode) => sum + episode.progress, 0) / episodes.length)
     : 0;
@@ -1117,6 +1125,7 @@ function DashboardView({
                 <p className="row-title">{episode.title}</p>
                 <p className="row-caption">{episode.summary}</p>
                 <div className="tiny-progress"><span style={{ width: `${episode.progress}%` }} /></div>
+                <EpisodeDownload episode={episode} hasClips={downloadableEpisodeIds.has(episode.id)} />
               </div>
               <div className="status-text">{episode.progress}% · {episode.status}</div>
             </div>
