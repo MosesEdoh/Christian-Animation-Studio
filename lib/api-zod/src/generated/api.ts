@@ -9,6 +9,42 @@ import * as zod from 'zod';
 
 
 /**
+ * @summary Check whether this device is trusted
+ */
+export const GetStudioTrustedDeviceStatusResponse = zod.object({
+  "trusted": zod.boolean(),
+  "deviceLabel": zod.string().nullable()
+})
+
+
+/**
+ * @summary Trust this browser or mobile device
+ */
+export const enrollStudioTrustedDeviceBodyLabelMax = 80;
+
+
+
+export const EnrollStudioTrustedDeviceBody = zod.object({
+  "platform": zod.enum(['web', 'mobile']),
+  "label": zod.string().max(enrollStudioTrustedDeviceBodyLabelMax).optional()
+})
+
+export const EnrollStudioTrustedDeviceResponse = zod.object({
+  "trusted": zod.boolean(),
+  "deviceToken": zod.string().nullable(),
+  "deviceLabel": zod.string()
+})
+
+
+/**
+ * @summary Remove trust from this device
+ */
+export const RevokeStudioTrustedDeviceResponse = zod.object({
+  "revoked": zod.boolean()
+})
+
+
+/**
  * Movies ordered by descending ID. Request older pages using beforeId set to the last returned ID. A page shorter than limit means the end of history; a full page may be followed by an empty page. ID cursors remain valid after deletion.
  */
 export const listStudioExportsQueryBeforeIdMax = 2147483647;

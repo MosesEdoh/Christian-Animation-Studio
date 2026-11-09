@@ -26,8 +26,12 @@ import {
   CreateStudioSceneResponse,
   CreateStudioShotBody,
   CreateStudioShotResponse,
+  EnrollStudioTrustedDeviceBody,
+  EnrollStudioTrustedDeviceResponse,
+  GetStudioTrustedDeviceStatusResponse,
   ReorderStudioShotsBody,
   ReorderStudioShotsResponse,
+  RevokeStudioTrustedDeviceResponse,
   SuggestShotsBody,
   SuggestShotsResponse,
   UpdateStudioCharacterBody,
@@ -51,6 +55,7 @@ import {
   studioScenesTable,
   studioShotsTable,
   studioAssetsTable,
+  studioTrustedDevicesTable,
 } from "@workspace/db";
 import { generateGeminiJson, generateGeminiText } from "../lib/ai";
 import {
@@ -65,8 +70,72 @@ import {
 } from "../lib/episodeVideo";
 import { EpisodeExportAdmissionError } from "../lib/episodeExportAdmission";
 import { episodeVideoClipsQuery } from "../lib/episodeVideoClips";
+import {
+  clearTrustedDeviceCookie,
+  createTrustedDeviceToken,
+  hashTrustedDeviceToken,
+  readTrustedDeviceToken,
+  setTrustedDeviceCookie,
+} from "../lib/trustedDevice";
 
 const router: IRouter = Router();
+
+router.get("/studio/trusted-device/status", async (req, res): Promise<void> => {
+  const token = readTrustedDeviceToken(req);
+  const [device] = token
+    ? await db
+        .select({ label: studioTrustedDevicesTable.label })
+        .from(studioTrustedDevicesTable)
+        .where(eq(studioTrustedDevicesTable.tokenHash, hashTrustedDeviceToken(token)))
+        .limit(1)
+    : [];
+  res.json(GetStudioTrustedDeviceStatusResponse.parse({
+    trusted: Boolean(device),
+    deviceLabel: device?.label ?? null,
+  }));
+});
+
+router.post("/studio/trusted-device/enroll", async (req, res): Promise<void> => {
+  const parsed = EnrollStudioTrustedDeviceBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.message });
+    return;
+  }
+  if (!req.dbUser) {
+    res.status(401).json({ error: "Sign in to trust this device." });
+    return;
+  }
+
+  const label = parsed.data.label?.trim().slice(0, 80) ||
+    (parsed.data.platform === "mobile" ? "Frame & Faith mobile app" : "This browser");
+  const token = createTrustedDeviceToken();
+  await db.insert(studioTrustedDevicesTable).values({
+    tokenHash: hashTrustedDeviceToken(token),
+    createdByUserId: req.dbUser.id,
+    label,
+  });
+
+  if (parsed.data.platform === "web") setTrustedDeviceCookie(res, token);
+  res.status(201).json(EnrollStudioTrustedDeviceResponse.parse({
+    trusted: true,
+    deviceToken: parsed.data.platform === "mobile" ? token : null,
+    deviceLabel: label,
+  }));
+});
+
+router.post("/studio/trusted-device/revoke", async (req, res): Promise<void> => {
+  const token = readTrustedDeviceToken(req);
+  let revoked = false;
+  if (token) {
+    const removed = await db
+      .delete(studioTrustedDevicesTable)
+      .where(eq(studioTrustedDevicesTable.tokenHash, hashTrustedDeviceToken(token)))
+      .returning({ id: studioTrustedDevicesTable.id });
+    revoked = removed.length > 0;
+  }
+  clearTrustedDeviceCookie(res);
+  res.json(RevokeStudioTrustedDeviceResponse.parse({ revoked }));
+});
 
 type EpisodePackageDraft = {
   scenes: Array<{

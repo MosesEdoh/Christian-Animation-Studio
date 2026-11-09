@@ -61,7 +61,7 @@ export function ClerkProviderWithRoutes({ children }: { children: ReactNode }) {
     signUpFallbackRedirectUrl={`${basePath}/studio`}
     localization={{
       signIn: { start: { title: "Welcome back", subtitle: "Sign in to your Frame & Faith studio" } },
-      signUp: { start: { title: "Create your account", subtitle: "Join Frame & Faith. Studio access requires approval." } },
+      signUp: { start: { title: "Create your account", subtitle: "Join Frame & Faith with a verified email, then trust your device." } },
     }}
     routerPush={(to) => setLocation(stripBase(to))}
     routerReplace={(to) => setLocation(stripBase(to), { replace: true })}

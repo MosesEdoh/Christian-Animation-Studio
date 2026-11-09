@@ -20,3 +20,4 @@
 export * from "./studio";
 export * from "./auth";
 export * from "./episode-export-admission";
+export * from "./studio-trusted-devices";

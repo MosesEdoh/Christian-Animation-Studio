@@ -19,6 +19,90 @@ tags:
   - name: storage
     description: Persistent studio asset uploads
 paths:
+  /studio/trusted-device/status:
+    get:
+      operationId: getStudioTrustedDeviceStatus
+      tags: [studio]
+      summary: Check whether this device is trusted
+      responses:
+        "200":
+          description: Current device trust status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrustedDeviceStatus"
+        "401":
+          description: Sign-in is required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: A verified email is required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /studio/trusted-device/enroll:
+    post:
+      operationId: enrollStudioTrustedDevice
+      tags: [studio]
+      summary: Trust this browser or mobile device
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TrustedDeviceEnrollmentInput"
+      responses:
+        "201":
+          description: Device trust was created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrustedDeviceEnrollment"
+        "400":
+          description: Invalid device enrollment request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "401":
+          description: Sign-in is required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: A verified email is required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+  /studio/trusted-device/revoke:
+    post:
+      operationId: revokeStudioTrustedDevice
+      tags: [studio]
+      summary: Remove trust from this device
+      responses:
+        "200":
+          description: Current device trust was removed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrustedDeviceRevocation"
+        "401":
+          description: Sign-in is required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
+        "403":
+          description: A verified email is required
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorEnvelope"
   /studio/exports:
     get:
       operationId: listStudioExports
@@ -608,6 +692,34 @@ components:
       properties:
         error: { type: string }
       required: [error]
+    TrustedDeviceStatus:
+      type: object
+      properties:
+        trusted: { type: boolean }
+        deviceLabel: { type: ["string", "null"] }
+      required: [trusted, deviceLabel]
+    TrustedDeviceEnrollmentInput:
+      type: object
+      properties:
+        platform:
+          type: string
+          enum: [web, mobile]
+        label:
+          type: string
+          maxLength: 80
+      required: [platform]
+    TrustedDeviceEnrollment:
+      type: object
+      properties:
+        trusted: { type: boolean }
+        deviceToken: { type: ["string", "null"] }
+        deviceLabel: { type: string }
+      required: [trusted, deviceToken, deviceLabel]
+    TrustedDeviceRevocation:
+      type: object
+      properties:
+        revoked: { type: boolean }
+      required: [revoked]
     AuthUser:
       type: object
       properties:

@@ -57,6 +57,10 @@ import type {
   StudioExport,
   StudioExportInput,
   StudioExportPreflight,
+  TrustedDeviceEnrollment,
+  TrustedDeviceEnrollmentInput,
+  TrustedDeviceRevocation,
+  TrustedDeviceStatus,
   UploadUrlRequest,
   UploadUrlResponse
 } from './api.schemas';
@@ -87,6 +91,245 @@ const withQueryKey = <T extends object, K>(query: T, queryKey: K): T & { queryKe
   }
   return result;
 };
+
+export const getGetStudioTrustedDeviceStatusUrl = () => {
+
+
+
+
+  return `/api/studio/trusted-device/status`
+}
+
+/**
+ * @summary Check whether this device is trusted
+ */
+export const getStudioTrustedDeviceStatus = async ( options?: Parameters<typeof customFetch>[1]): Promise<TrustedDeviceStatus> => {
+
+  return customFetch<TrustedDeviceStatus>(getGetStudioTrustedDeviceStatusUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetStudioTrustedDeviceStatusQueryKey = () => {
+    return [
+    `/api/studio/trusted-device/status`
+    ] as const;
+    }
+
+
+export const getGetStudioTrustedDeviceStatusQueryOptions = <TData = Awaited<ReturnType<typeof getStudioTrustedDeviceStatus>>, TError = ErrorType<ErrorEnvelope>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStudioTrustedDeviceStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetStudioTrustedDeviceStatusQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getStudioTrustedDeviceStatus>>> = ({ signal }) => getStudioTrustedDeviceStatus({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getStudioTrustedDeviceStatus>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetStudioTrustedDeviceStatusQueryResult = NonNullable<Awaited<ReturnType<typeof getStudioTrustedDeviceStatus>>>
+export type GetStudioTrustedDeviceStatusQueryError = ErrorType<ErrorEnvelope>
+
+
+/**
+ * @summary Check whether this device is trusted
+ */
+
+export function useGetStudioTrustedDeviceStatus<TData = Awaited<ReturnType<typeof getStudioTrustedDeviceStatus>>, TError = ErrorType<ErrorEnvelope>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStudioTrustedDeviceStatus>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetStudioTrustedDeviceStatusQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getEnrollStudioTrustedDeviceUrl = () => {
+
+
+
+
+  return `/api/studio/trusted-device/enroll`
+}
+
+/**
+ * @summary Trust this browser or mobile device
+ */
+export const enrollStudioTrustedDevice = async (trustedDeviceEnrollmentInput: TrustedDeviceEnrollmentInput, options?: Parameters<typeof customFetch>[1]): Promise<TrustedDeviceEnrollment> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<TrustedDeviceEnrollment>(getEnrollStudioTrustedDeviceUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(trustedDeviceEnrollmentInput)
+  }
+);}
+
+
+
+
+
+export const getEnrollStudioTrustedDeviceMutationKey = () => ['enrollStudioTrustedDevice'] as const;
+
+export const getEnrollStudioTrustedDeviceMutationOptions = <TError = ErrorType<ErrorEnvelope>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof enrollStudioTrustedDevice>>, TError,EnrollStudioTrustedDeviceMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof enrollStudioTrustedDevice>>, TError,EnrollStudioTrustedDeviceMutationVariables, TContext> => {
+
+const mutationKey = getEnrollStudioTrustedDeviceMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof enrollStudioTrustedDevice>>, EnrollStudioTrustedDeviceMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  enrollStudioTrustedDevice(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type EnrollStudioTrustedDeviceMutationResult = NonNullable<Awaited<ReturnType<typeof enrollStudioTrustedDevice>>>
+    export type EnrollStudioTrustedDeviceMutationBody = BodyType<TrustedDeviceEnrollmentInput>
+    export type EnrollStudioTrustedDeviceMutationError = ErrorType<ErrorEnvelope>
+    export type EnrollStudioTrustedDeviceMutationVariables = {data: BodyType<TrustedDeviceEnrollmentInput>}
+
+    /**
+ * @summary Trust this browser or mobile device
+ */
+export const useEnrollStudioTrustedDevice = <TError = ErrorType<ErrorEnvelope>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof enrollStudioTrustedDevice>>, TError,EnrollStudioTrustedDeviceMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof enrollStudioTrustedDevice>>,
+        TError,
+        EnrollStudioTrustedDeviceMutationVariables,
+        TContext
+      > => {
+      return useMutation(getEnrollStudioTrustedDeviceMutationOptions(options));
+    }
+
+export const getRevokeStudioTrustedDeviceUrl = () => {
+
+
+
+
+  return `/api/studio/trusted-device/revoke`
+}
+
+/**
+ * @summary Remove trust from this device
+ */
+export const revokeStudioTrustedDevice = async ( options?: Parameters<typeof customFetch>[1]): Promise<TrustedDeviceRevocation> => {
+
+  return customFetch<TrustedDeviceRevocation>(getRevokeStudioTrustedDeviceUrl(),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getRevokeStudioTrustedDeviceMutationKey = () => ['revokeStudioTrustedDevice'] as const;
+
+export const getRevokeStudioTrustedDeviceMutationOptions = <TError = ErrorType<ErrorEnvelope>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof revokeStudioTrustedDevice>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof revokeStudioTrustedDevice>>, TError,void, TContext> => {
+
+const mutationKey = getRevokeStudioTrustedDeviceMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof revokeStudioTrustedDevice>>, void> = () => {
+
+
+          return  revokeStudioTrustedDevice(requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RevokeStudioTrustedDeviceMutationResult = NonNullable<Awaited<ReturnType<typeof revokeStudioTrustedDevice>>>
+
+    export type RevokeStudioTrustedDeviceMutationError = ErrorType<ErrorEnvelope>
+
+
+    /**
+ * @summary Remove trust from this device
+ */
+export const useRevokeStudioTrustedDevice = <TError = ErrorType<ErrorEnvelope>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof revokeStudioTrustedDevice>>, TError,void, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof revokeStudioTrustedDevice>>,
+        TError,
+        void,
+        TContext
+      > => {
+      return useMutation(getRevokeStudioTrustedDeviceMutationOptions(options));
+    }
 
 export const getListStudioExportsUrl = (params?: ListStudioExportsParams,) => {
   const normalizedParams = new URLSearchParams();

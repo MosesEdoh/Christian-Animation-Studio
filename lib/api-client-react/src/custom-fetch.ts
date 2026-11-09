@@ -17,6 +17,7 @@ const DEFAULT_JSON_ACCEPT = "application/json, application/problem+json";
 
 let _baseUrl: string | null = null;
 let _authTokenGetter: AuthTokenGetter | null = null;
+let _deviceTrustTokenGetter: AuthTokenGetter | null = null;
 
 /**
  * Set a base URL that is prepended to every relative request URL
@@ -42,6 +43,11 @@ export function setBaseUrl(url: string | null): void {
  */
 export function setAuthTokenGetter(getter: AuthTokenGetter | null): void {
   _authTokenGetter = getter;
+}
+
+/** Register a device token getter for trusted mobile API requests. */
+export function setDeviceTrustTokenGetter(getter: AuthTokenGetter | null): void {
+  _deviceTrustTokenGetter = getter;
 }
 
 function isRequest(input: RequestInfo | URL): input is Request {
@@ -353,17 +359,24 @@ export async function customFetch<T = unknown>(
   // Authorization header has been explicitly provided.
   // A mobile token getter is not permission to send credentials to provider
   // media/presigned URLs. Resolve and compare origins, never hostname prefixes.
-  let trustedApiOrigin = false;
+  let trustedApiRequest = false;
   if (_baseUrl) {
     try {
-      trustedApiOrigin = new URL(resolveUrl(input), _baseUrl).origin === new URL(_baseUrl).origin;
+      const target = new URL(resolveUrl(input), _baseUrl);
+      trustedApiRequest =
+        target.origin === new URL(_baseUrl).origin &&
+        (target.pathname === "/api" || target.pathname.startsWith("/api/"));
     } catch { /* Invalid URLs fail in fetch without reading a token. */ }
   }
-  if (_authTokenGetter && trustedApiOrigin && !headers.has("authorization")) {
+  if (_authTokenGetter && trustedApiRequest && !headers.has("authorization")) {
     const token = await _authTokenGetter();
     if (token) {
       headers.set("authorization", `Bearer ${token}`);
     }
+  }
+  if (_deviceTrustTokenGetter && trustedApiRequest && !headers.has("x-studio-device")) {
+    const deviceToken = await _deviceTrustTokenGetter();
+    if (deviceToken) headers.set("x-studio-device", deviceToken);
   }
 
   const requestInfo = { method, url: resolveUrl(input) };

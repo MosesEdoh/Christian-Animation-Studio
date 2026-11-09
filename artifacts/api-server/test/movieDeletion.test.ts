@@ -3,10 +3,11 @@ import { afterEach, beforeEach, mock, test } from "node:test";
 import express from "express";
 import { PgDialect } from "drizzle-orm/pg-core";
 import type { SQL } from "drizzle-orm";
+import { hashTrustedDeviceToken } from "../src/lib/trustedDevice";
 import { clerkSession } from "./helpers/clerkSession";
 
 process.env.DATABASE_URL ??= "postgresql://test:test@localhost/unused";
-const { db, studioExportsTable, usersTable } = await import("@workspace/db");
+const { db, studioExportsTable, studioTrustedDevicesTable, usersTable } = await import("@workspace/db");
 const { default: routes } = await import("../src/routes/index");
 const { ObjectStorageService, ObjectNotFoundError } = await import("../src/lib/objectStorage");
 type Row = typeof studioExportsTable.$inferSelect;
@@ -15,8 +16,10 @@ let events: string[];
 let storageError: unknown;
 let databaseError: boolean;
 let signedIn: boolean;
-let approved: boolean;
+let trustedDevice: boolean;
 const dialect = new PgDialect();
+const deviceToken = "c".repeat(43);
+const deviceTokenHash = hashTrustedDeviceToken(deviceToken);
 const job = (id: number, status: Row["status"], objectPath: string | null = "/objects/movie.mp4"): Row => ({
   id, requestId: null, status, objectPath, episodeId: 1, aspectRatio: "16:9", quality: "720p",
   progress: 100, sizeBytes: null, error: null, startedAt: null, createdAt: new Date(),
@@ -30,11 +33,15 @@ beforeEach(() => {
   events = [];
   storageError = undefined;
   databaseError = false;
-  signedIn = approved = true;
+  signedIn = trustedDevice = true;
   mock.method(db, "select", () => ({
     from: (table: unknown) => table === usersTable
       ? { where: () => ({ limit: async () => [{ id: "creator" }] }) }
-      : { where: (predicate?: SQL) => {
+      : table === studioTrustedDevicesTable
+        ? { where: (predicate: SQL) => ({
+            limit: async () => dialect.sqlToQuery(predicate).params[0] === deviceTokenHash ? [{ id: 1 }] : [],
+          }) }
+        : { where: (predicate?: SQL) => {
         const query = predicate ? dialect.sqlToQuery(predicate) : undefined;
         if (!query || query.sql.includes(" < ")) {
           const page = rows.filter(row => !query || row.id < Number(query.params[0])).sort((a, b) => b.id - a.id);
@@ -74,12 +81,11 @@ async function request(id: string, method = "DELETE") {
   const app = express();
   // Exercise the real parent router's protection, not a test-only route guard.
   app.use((req, _res, next) => {
-    Object.assign(req, clerkSession(signedIn ? { userId: "creator", email: approved ? "allowed@example.test" : "denied@example.test" } : null));
+    Object.assign(req, clerkSession(signedIn ? { userId: "creator", email: "any@example.test" } : null));
+    if (trustedDevice) req.headers["x-studio-device"] = deviceToken;
     req.log = { error() {} } as typeof req.log;
     next();
   });
-  const saved = process.env.STUDIO_ALLOWED_EMAILS;
-  process.env.STUDIO_ALLOWED_EMAILS = "allowed@example.test";
   app.use("/api", routes);
   app.use((_err: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
     res.status(500).json({ error: "Database unavailable" });
@@ -91,8 +97,6 @@ async function request(id: string, method = "DELETE") {
     return await fetch(`http://127.0.0.1:${address.port}/api/studio/exports${id.startsWith("?") ? id : `/${id}`}`, { method });
   } finally {
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
-    if (saved === undefined) delete process.env.STUDIO_ALLOWED_EMAILS;
-    else process.env.STUDIO_ALLOWED_EMAILS = saved;
   }
 }
 
@@ -183,11 +187,11 @@ test("invalid IDs cannot delete anything", async () => {
   assert.equal(rows.length, 1);
   assert.deepEqual(events, []);
 });
-test("anonymous and unapproved callers cannot delete movies, even missing ones", async () => {
+test("anonymous and untrusted devices cannot delete movies, even missing ones", async () => {
   signedIn = false;
   assert.equal((await request("1")).status, 401);
   signedIn = true;
-  approved = false;
+  trustedDevice = false;
   assert.equal((await request("1")).status, 403);
   assert.equal((await request("999")).status, 403);
   assert.deepEqual(events, []);

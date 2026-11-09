@@ -8,7 +8,7 @@ export default function HomeScreen() {
   const auth = useAuth();
   const query = useGetStudioBootstrap({ query: { queryKey: getGetStudioBootstrapQueryKey() } });
   if (query.isLoading) return <View style={[styles.center, { backgroundColor: colors.background }]}><ActivityIndicator color={colors.primary} /><Text style={{ color: colors.foreground }}>Loading your studio…</Text></View>;
-  if (query.isError || !query.data) return <View style={[styles.center, { backgroundColor: colors.background }]}><Text style={{ color: colors.foreground }}>Could not load the studio. Access requires an approved account.</Text><Pressable onPress={() => query.refetch()}><Text style={{ color: colors.teal, marginTop: 12 }}>Try again</Text></Pressable><Pressable onPress={() => auth.signOut()}><Text style={{ color: colors.teal }}>Sign out</Text></Pressable></View>;
+  if (query.isError || !query.data) return <View style={[styles.center, { backgroundColor: colors.background }]}><Text style={{ color: colors.foreground }}>Could not load the studio. Use a verified email on a trusted device, then try again.</Text><Pressable onPress={() => query.refetch()}><Text style={{ color: colors.teal, marginTop: 12 }}>Try again</Text></Pressable><Pressable onPress={() => auth.signOut()}><Text style={{ color: colors.teal }}>Sign out</Text></Pressable></View>;
   const { project, episodes, scenes, shots } = query.data;
   return (
     <ScrollView contentContainerStyle={[styles.container, { backgroundColor: colors.background }]}>

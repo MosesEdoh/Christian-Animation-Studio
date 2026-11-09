@@ -39,6 +39,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import {
+  getGetStudioTrustedDeviceStatusQueryKey,
   getGetStudioBootstrapQueryKey,
   customFetch,
   useCheckSceneContent,
@@ -52,6 +53,9 @@ import {
   useGenerateSceneDraft,
   useGenerateShotClip,
   useGetStudioBootstrap,
+  useGetStudioTrustedDeviceStatus,
+  useEnrollStudioTrustedDevice,
+  useRevokeStudioTrustedDevice,
   useReorderStudioShots,
   useSuggestShots,
   useUpdateStudioCharacter,
@@ -126,8 +130,7 @@ function Home() {
   if (isSignedIn) return <Redirect to="/studio" />;
   return <main className="content-wrap" style={{ maxWidth: 620, margin: '10vh auto' }}>
     <span className="eyebrow">FRAME & FAITH</span><h1>Your private studio</h1>
-    <p>Sign in with your approved account to view scripts, references, videos, and downloads.</p>
-    {new URLSearchParams(window.location.search).get('access') === 'denied' && <p role="alert">That account is not approved for this studio. Please use your approved account.</p>}
+    <p>Sign in with any verified email, then trust this browser to view scripts, references, videos, and downloads.</p>
     <Link className="btn btn-primary" href="/sign-in" data-testid="login-btn">Sign in</Link>
     <Link className="btn btn-quiet" href="/sign-up">Create account</Link>
   </main>;
@@ -140,7 +143,73 @@ function StudioGate() {
     id: user.externalId ?? user.id, email: user.primaryEmailAddress?.emailAddress ?? null,
     firstName: user.firstName, lastName: user.lastName, profileImageUrl: user.imageUrl,
   };
-  return <StudioWorkspace key={authUser.id} authUser={authUser} />;
+  return <TrustedDeviceGate><StudioWorkspace key={authUser.id} authUser={authUser} /></TrustedDeviceGate>;
+}
+
+function TrustedDeviceGate({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient();
+  const status = useGetStudioTrustedDeviceStatus();
+  const enroll = useEnrollStudioTrustedDevice();
+  const revoke = useRevokeStudioTrustedDevice();
+  const [actionError, setActionError] = useState('');
+
+  async function refreshStatus() {
+    await queryClient.invalidateQueries({ queryKey: getGetStudioTrustedDeviceStatusQueryKey() });
+  }
+  async function trustBrowser() {
+    setActionError('');
+    try {
+      await enroll.mutateAsync({ data: { platform: 'web', label: 'This browser' } });
+      await refreshStatus();
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : 'Could not trust this browser. Please retry.');
+    }
+  }
+  async function forgetBrowser() {
+    setActionError('');
+    try {
+      await revoke.mutateAsync();
+      await refreshStatus();
+    } catch (cause) {
+      setActionError(cause instanceof Error ? cause.message : 'Could not remove this browser. Please retry.');
+    }
+  }
+
+  if (status.isPending) {
+    return <main className="content-wrap" style={{ maxWidth: 620, margin: '10vh auto' }}>
+      <span className="eyebrow">FRAME & FAITH</span><p>Checking this browser…</p>
+    </main>;
+  }
+  if (status.isError) {
+    return <main className="content-wrap" style={{ maxWidth: 620, margin: '10vh auto' }}>
+      <span className="eyebrow">FRAME & FAITH</span><h1>Studio access needs attention</h1>
+      <p role="alert">{status.error instanceof Error ? status.error.message : 'Use a verified email address and try again.'}</p>
+      <button className="btn btn-primary" data-testid="button-retry-device-status" onClick={() => void status.refetch()}>Retry</button>
+      <LogoutButton />
+    </main>;
+  }
+  if (!status.data?.trusted) {
+    return <main className="content-wrap" style={{ maxWidth: 620, margin: '10vh auto' }}>
+      <span className="eyebrow"><ShieldCheck size={14} /> FRAME & FAITH</span>
+      <h1>Trust this browser</h1>
+      <p>Use a verified email to add this browser. Afterward, any verified email signed in here can access the same shared studio.</p>
+      {actionError && <p role="alert">{actionError}</p>}
+      <button className="btn btn-primary" data-testid="button-trust-device" disabled={enroll.isPending} onClick={() => void trustBrowser()}>
+        {enroll.isPending ? 'Trusting browser…' : 'Trust this browser'}
+      </button>
+      <LogoutButton />
+    </main>;
+  }
+  return <>
+    <div data-testid="trusted-device-banner" style={{ minHeight: 38, padding: '6px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, background: 'var(--surface-subtle, #f4f2ed)', borderBottom: '1px solid var(--border, #dedbd4)' }}>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}><ShieldCheck size={15} /> Trusted device · {status.data.deviceLabel ?? 'This browser'}</span>
+      <button className="btn btn-quiet" data-testid="button-forget-device" disabled={revoke.isPending} onClick={() => void forgetBrowser()}>
+        {revoke.isPending ? 'Removing…' : 'Forget'}
+      </button>
+    </div>
+    {actionError && <p role="alert">{actionError}</p>}
+    {children}
+  </>;
 }
 
 function StudioWorkspace({ authUser }: { authUser: AuthUser }) {
@@ -900,7 +969,7 @@ function StudioWorkspace({ authUser }: { authUser: AuthUser }) {
         <div className="content-wrap">
           <div className="error-panel" data-testid="panel-bootstrap-error">
             <h2>Studio access unavailable</h2>
-            <p>{bootstrapQuery.error instanceof Error ? bootstrapQuery.error.message : 'Sign in with your approved account or try reconnecting.'}</p>
+            <p>{bootstrapQuery.error instanceof Error ? bootstrapQuery.error.message : 'Try reconnecting to the shared studio.'}</p>
             <LogoutButton />
             <button
               type="button"

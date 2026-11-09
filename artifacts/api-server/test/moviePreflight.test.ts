@@ -3,20 +3,23 @@ import { afterEach, beforeEach, mock, test } from "node:test";
 import express from "express";
 import { PgDialect } from "drizzle-orm/pg-core";
 import type { SQL } from "drizzle-orm";
+import { hashTrustedDeviceToken } from "../src/lib/trustedDevice";
 import { clerkSession } from "./helpers/clerkSession";
 
 process.env.DATABASE_URL ??= "postgresql://test:test@localhost/unused";
-const { db, studioEpisodesTable, studioScenesTable } = await import("@workspace/db");
+const { db, studioEpisodesTable, studioScenesTable, studioTrustedDevicesTable, usersTable } = await import("@workspace/db");
 const { preflightDb, estimateMovie } = await import("../src/lib/moviePreflight");
 const { default: routes } = await import("../src/routes/index");
 const { movieScenePages, moviePageSeconds } = await import("../src/lib/movieLayout");
 const { movieLimits } = await import("../src/lib/movieBudget");
 const textBudget = movieLimits.frames * 18 * 48;
 const dialect = new PgDialect();
+const deviceToken = "d".repeat(43);
+const deviceTokenHash = hashTrustedDeviceToken(deviceToken);
 let episodes: { id: number; summary: string }[];
 let scenes: { id: number; episodeId: number; duration: string; text: string }[];
 let signedIn: boolean;
-let approved: boolean;
+let trustedDevice: boolean;
 let reads: number;
 let fail: boolean;
 let readDelayMs: number;
@@ -26,10 +29,22 @@ let beforeTextRead: (() => void) | undefined;
 const length = (text: string) => Array.from(text).length;
 
 beforeEach(() => {
-  mock.method(db, "select", () => ({ from: () => ({ where: () => ({ limit: async () => [{ id: "creator" }] }) }) }));
+  mock.method(db, "select", () => ({
+    from: (table: unknown) => ({
+      where: (predicate?: SQL) => ({
+        limit: async () => {
+          if (table === usersTable) return [{ id: "creator" }];
+          if (table === studioTrustedDevicesTable) {
+            return predicate && dialect.sqlToQuery(predicate).params[0] === deviceTokenHash ? [{ id: 1 }] : [];
+          }
+          return [];
+        },
+      }),
+    }),
+  }));
   episodes = [{ id: 7, summary: "A short summary." }];
   scenes = [{ id: 1, episodeId: 7, duration: "1:00", text: "Hello world." }];
-  signedIn = approved = true;
+  signedIn = trustedDevice = true;
   reads = 0; fail = false;
   readDelayMs = allocatedText = textReads = 0;
   beforeTextRead = undefined;
@@ -222,12 +237,11 @@ test("all batches share the five-second deadline and stop on cancellation", asyn
 async function request(query: string) {
   const app = express();
   app.use((req, _res, next) => {
-    Object.assign(req, clerkSession(signedIn ? { userId: "creator", email: approved ? "allowed@example.test" : "denied@example.test" } : null));
+    Object.assign(req, clerkSession(signedIn ? { userId: "creator", email: "any@example.test" } : null));
+    if (trustedDevice) req.headers["x-studio-device"] = deviceToken;
     req.log = { warn() {} } as typeof req.log;
     next();
   });
-  const saved = process.env.STUDIO_ALLOWED_EMAILS;
-  process.env.STUDIO_ALLOWED_EMAILS = "allowed@example.test";
   app.use("/api", routes);
   const server = app.listen(0, "127.0.0.1");
   try {
@@ -236,8 +250,6 @@ async function request(query: string) {
     return { status: response.status, body: await response.json() };
   } finally {
     await new Promise<void>(resolve => server.close(() => resolve()));
-    if (saved === undefined) delete process.env.STUDIO_ALLOWED_EMAILS;
-    else process.env.STUDIO_ALLOWED_EMAILS = saved;
   }
 }
 
@@ -255,7 +267,7 @@ test("route validates selection, supports series and episodes, and returns actio
 test("preflight uses the same parent access guard as movie exports", async () => {
   signedIn = false;
   assert.equal((await request("aspectRatio=16:9")).status, 401);
-  signedIn = true; approved = false;
+  signedIn = true; trustedDevice = false;
   assert.equal((await request("aspectRatio=16:9")).status, 403);
   assert.equal(reads, 0);
 });

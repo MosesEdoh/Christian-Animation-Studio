@@ -8,7 +8,7 @@ import { bootstrap, clip, episode, otherEpisode, shot } from './episodeFixtures'
 import { NodeZipWorker } from './nodeZipWorker';
 import { randomFillSync } from 'node:crypto';
 
-const state = vi.hoisted(() => ({ data: undefined as StudioBootstrap | undefined }));
+const state = vi.hoisted(() => ({ data: undefined as StudioBootstrap | undefined, deviceTrusted: true }));
 vi.mock('@clerk/react', () => ({
   useUser: () => ({ user: { id: 'creator', externalId: null, firstName: 'Creator', primaryEmailAddress: { emailAddress: 'creator@example.test' } }, isLoaded: true }),
 }));
@@ -24,10 +24,16 @@ vi.mock('@workspace/api-client-react', async importOriginal => {
   // Keep generated query keys/types intact; isolate unrelated mutation hooks.
   const mutations = Object.fromEntries(Object.keys(actual)
     .filter(name => name.startsWith('use') && name !== 'useGetStudioBootstrap')
-    .map(name => [name, () => ({ mutate: vi.fn(), isPending: false })]));
+    .map(name => [name, () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false })]));
   return {
     ...actual, ...mutations,
     useGetStudioBootstrap: () => ({ data: state.data, isLoading: false, isError: false }),
+    useGetStudioTrustedDeviceStatus: () => ({
+      data: { trusted: state.deviceTrusted, deviceLabel: 'Test browser' },
+      isPending: false,
+      isError: false,
+      refetch: vi.fn(),
+    }),
   };
 });
 vi.mock('../src/components/MovieExports', () => ({ MovieExports: () => null }));
@@ -60,8 +66,19 @@ const unavailable: Array<[string, Partial<Clip>]> = [
 beforeEach(() => {
   window.history.replaceState(null, '', '/studio');
   state.data = structuredClone(bootstrap);
+  state.deviceTrusted = true;
   vi.mocked(downloadEpisodeVideo).mockReset();
   vi.mocked(downloadSeriesPackage).mockReset();
+});
+
+describe('trusted device access', () => {
+  it('keeps the studio hidden until this browser has been trusted', () => {
+    state.deviceTrusted = false;
+    render(<App />);
+    expect(screen.getByRole('heading', { name: 'Trust this browser' })).toBeVisible();
+    expect(screen.getByTestId('button-trust-device')).toBeEnabled();
+    expect(screen.queryByTestId('view-dashboard')).not.toBeInTheDocument();
+  });
 });
 
 describe('signed-in dashboard series ZIP wiring', () => {

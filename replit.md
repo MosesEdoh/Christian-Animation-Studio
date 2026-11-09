@@ -46,7 +46,7 @@ Private creative workspace for writing, directing, storyboarding, and generating
 - Authentication uses Replit-managed Clerk: web uses same-origin session cookies, Expo uses bearer tokens from Clerk's secure token cache. Browser sign-in/sign-up live at `/sign-in` and `/sign-up`; signed-in creators land at `/studio`.
 - Clerk proxy configuration is injected by managed publishing, not development secrets: `VITE_CLERK_PROXY_URL` for web and `CLERK_PROXY_URL` forwarded to `EXPO_PUBLIC_CLERK_PROXY_URL` for Expo. Empty development values are expected; do not hardcode a proxy fallback.
 - Local users and legacy sessions tables are retained. Verified `sessionClaims.userId` resolves the original local ID; Clerk native IDs are only for Clerk APIs. Identity fields are read from Clerk, not re-synced into local rows.
-- Reference uploads and private asset reads require an authenticated Clerk session and the existing approved-email access gate (`STUDIO_ALLOWED_EMAILS`).
+- Reference uploads and private asset reads require a verified Clerk session and a registered trusted device. Any verified email may enroll a device; trusted accounts share the same studio data.
 - The series ZIP export includes scripts, shot lists, character data, reference images, and provider clips when they are browser-downloadable; otherwise it records provider URLs.
 - Scene headings, intentions, scripts, and storyboard-card edits/order are stored in Postgres; unsaved script edits save before changing scenes or leaving the editor.
 - Difficult faith questions are explored in a Bible-grounded, broadly Christian writers’ tool; the question is sent to Gemini for generation but is not saved to the studio database.

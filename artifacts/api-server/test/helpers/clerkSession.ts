@@ -4,6 +4,6 @@ export function clerkSession(claims: Record<string, unknown> | null, nativeId = 
   return { auth: Object.assign(() => ({
     tokenType: "session_token",
     userId: claims ? nativeId : null,
-    sessionClaims: claims,
+    sessionClaims: claims ? { email_verified: true, ...claims } : null,
   }), { [Symbol.for("@clerk/express.auth")]: true }) };
 }

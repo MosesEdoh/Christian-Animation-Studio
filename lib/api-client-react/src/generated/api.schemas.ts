@@ -110,6 +110,37 @@ export interface ErrorEnvelope {
   error: string;
 }
 
+export interface TrustedDeviceStatus {
+  trusted: boolean;
+  /** @nullable */
+  deviceLabel: string | null;
+}
+
+export type TrustedDeviceEnrollmentInputPlatform = typeof TrustedDeviceEnrollmentInputPlatform[keyof typeof TrustedDeviceEnrollmentInputPlatform];
+
+
+export const TrustedDeviceEnrollmentInputPlatform = {
+  web: 'web',
+  mobile: 'mobile',
+} as const;
+
+export interface TrustedDeviceEnrollmentInput {
+  platform: TrustedDeviceEnrollmentInputPlatform;
+  /** @maxLength 80 */
+  label?: string;
+}
+
+export interface TrustedDeviceEnrollment {
+  trusted: boolean;
+  /** @nullable */
+  deviceToken: string | null;
+  deviceLabel: string;
+}
+
+export interface TrustedDeviceRevocation {
+  revoked: boolean;
+}
+
 export interface AuthUser {
   id: string;
   /** @nullable */

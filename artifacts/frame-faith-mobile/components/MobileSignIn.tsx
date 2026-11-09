@@ -73,7 +73,7 @@ export function MobileSignIn() {
     contentContainerStyle={{ padding: 28, paddingTop: (Platform.OS === 'web' ? Math.max(insets.top, 67) : insets.top) + 35, paddingBottom: Math.max(insets.bottom, 34), gap: 18 }}>
     <Text style={{ color: colors.teal, fontFamily: 'Manrope_700Bold' }}>FRAME & FAITH</Text>
     <Text style={{ fontSize: 30, fontFamily: 'Fraunces_600SemiBold', color: colors.foreground }}>{verification ? 'Verify your email' : register ? 'Create an account' : 'Your private studio'}</Text>
-    <Text style={{ color: colors.mutedForeground }}>Studio access is limited to approved accounts.</Text>
+    <Text style={{ color: colors.mutedForeground }}>Use any verified email, then trust each device before opening the shared studio.</Text>
     {verification ? <TextInput testID="mobile-code" accessibilityLabel="Verification code" style={inputStyle} value={code} onChangeText={setCode} keyboardType="number-pad" placeholder="Verification code" placeholderTextColor={colors.mutedForeground} /> : <>
       <TextInput testID="mobile-email" accessibilityLabel="Email" style={inputStyle} value={emailAddress} onChangeText={setEmailAddress} autoCapitalize="none" autoComplete="email" keyboardType="email-address" placeholder="Email" placeholderTextColor={colors.mutedForeground} />
       <TextInput testID="mobile-password" accessibilityLabel="Password" style={inputStyle} value={password} onChangeText={setPassword} secureTextEntry placeholder="Password" placeholderTextColor={colors.mutedForeground} />

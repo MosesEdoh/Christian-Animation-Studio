@@ -1,10 +1,13 @@
 import { useEffect, useState, type ReactNode } from 'react';
+import { Platform } from 'react-native';
 import { useAuth, useUser } from '@clerk/expo';
-import { setAuthTokenGetter } from '@workspace/api-client-react';
+import { setAuthTokenGetter, setDeviceTrustTokenGetter } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { View, Text, ActivityIndicator } from 'react-native';
 import { useColors } from '@/hooks/useColors';
 import { MobileSignIn } from '@/components/MobileSignIn';
+import { TrustedDeviceGate } from '@/components/TrustedDeviceGate';
+import { getTrustedDeviceToken } from '@/lib/trusted-device';
 
 export function mediaUrl(value: string) {
   return new URL(value, `https://${process.env.EXPO_PUBLIC_DOMAIN}`).toString();
@@ -15,9 +18,13 @@ export function MobileSession({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
   useEffect(() => {
     setAuthTokenGetter(() => getToken());
+    setDeviceTrustTokenGetter(Platform.OS === 'web' ? null : getTrustedDeviceToken);
     cache.clear();
     setReady(true);
-    return () => setAuthTokenGetter(null);
+    return () => {
+      setAuthTokenGetter(null);
+      setDeviceTrustTokenGetter(null);
+    };
   }, [getToken, userId, cache]);
   return ready ? children : null;
 }
@@ -25,5 +32,5 @@ export function AuthGate({ children }: { children: ReactNode }) {
   const { isLoaded, isSignedIn } = useUser();
   const colors = useColors();
   if (!isLoaded) return <View><ActivityIndicator color={colors.primary} /><Text>Loading…</Text></View>;
-  return isSignedIn ? children : <MobileSignIn />;
+  return isSignedIn ? <TrustedDeviceGate>{children}</TrustedDeviceGate> : <MobileSignIn />;
 }
