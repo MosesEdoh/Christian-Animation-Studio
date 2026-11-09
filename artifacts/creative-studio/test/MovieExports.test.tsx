@@ -244,6 +244,84 @@ describe('MovieExports queue controls', () => {
 });
 
 describe('MovieExports errors and retries', () => {
+  it('reports partial success, refreshes the list, and resumes only missing formats for the original target', async () => {
+    api.create.mockResolvedValueOnce(job()).mockRejectedValueOnce(new Error('Queue is full.'));
+    const { invalidate } = mount();
+    select('Episode or series', String(episode.id));
+    fireEvent.click(buildAll());
+    expect(await screen.findByRole('alert')).toHaveTextContent('Queue is full.');
+    await expectRefresh(invalidate);
+    expect(api.create).toHaveBeenCalledTimes(2);
+    expect(screen.getByTestId('movie-batch-summary')).toHaveTextContent(`Episode ${episode.number}`);
+    expect(screen.getByTestId('movie-batch-queued')).toHaveTextContent('Queued successfully: 16:9 · 720p.');
+    expect(screen.getByTestId('movie-batch-missing')).toHaveTextContent('16:9 · 1080p, 9:16 · 720p, 9:16 · 1080p');
+    expect(buildAll()).toBeDisabled();
+    // Changing the form must not change the batch's retry target or formats.
+    select('Episode or series', String(otherEpisode.id));
+    select('Orientation', '9:16');
+    select('Resolution', '1080p');
+    api.preflight.mockClear();
+    const pending = deferred<StudioExport>();
+    api.create.mockReturnValueOnce(pending.promise);
+    const resume = screen.getByRole('button', { name: 'Queue missing formats' });
+    fireEvent.click(resume);
+    await waitFor(() => expect(api.create).toHaveBeenCalledTimes(3));
+    expect(resume).toBeDisabled();
+    fireEvent.click(resume);
+    expect(api.create).toHaveBeenCalledTimes(3);
+    await act(async () => pending.resolve(job()));
+    await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(2));
+    expect(api.preflight.mock.calls).toEqual([
+      [{ episodeId: episode.id, aspectRatio: '16:9' }],
+      [{ episodeId: episode.id, aspectRatio: '9:16' }],
+    ]);
+    expect(api.create.mock.calls.slice(2).map(([request]) => request)).toEqual([
+      { data: { episodeId: episode.id, aspectRatio: '16:9', quality: '1080p' } },
+      { data: { episodeId: episode.id, aspectRatio: '9:16', quality: '720p' } },
+      { data: { episodeId: episode.id, aspectRatio: '9:16', quality: '1080p' } },
+    ]);
+    expect(screen.getByTestId('movie-batch-queued')).toHaveTextContent('16:9 · 720p, 16:9 · 1080p, 9:16 · 720p, 9:16 · 1080p');
+    expect(screen.getByTestId('movie-batch-missing')).toHaveTextContent('None — all four formats are queued');
+    expect(screen.queryByRole('button', { name: 'Queue missing formats' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('preserves progress through another failure and retries only the still-missing formats', async () => {
+    api.create.mockResolvedValueOnce(job()).mockRejectedValueOnce(new Error('Queue is full.'));
+    const { invalidate } = mount();
+    fireEvent.click(buildAll());
+    await expectRefresh(invalidate);
+    api.create.mockResolvedValueOnce(job()).mockRejectedValueOnce(new Error('Queue is still full.'));
+    fireEvent.click(screen.getByRole('button', { name: 'Queue missing formats' }));
+    await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(2));
+    expect(screen.getByRole('alert')).toHaveTextContent('Queue is still full.');
+    expect(screen.getByTestId('movie-batch-queued')).toHaveTextContent('16:9 · 720p, 16:9 · 1080p');
+    expect(screen.getByTestId('movie-batch-missing')).toHaveTextContent('Not queued: 9:16 · 720p, 9:16 · 1080p.');
+    fireEvent.click(screen.getByRole('button', { name: 'Queue missing formats' }));
+    await waitFor(() => expect(invalidate).toHaveBeenCalledTimes(3));
+    expect(api.create.mock.calls.slice(4).map(([request]) => request.data)).toEqual([
+      { episodeId: null, aspectRatio: '9:16', quality: '720p' },
+      { episodeId: null, aspectRatio: '9:16', quality: '1080p' },
+    ]);
+  });
+
+  it('keeps the missing formats available if fresh preflight blocks the retry', async () => {
+    api.create.mockResolvedValueOnce(job()).mockRejectedValueOnce(new Error('Queue is full.'));
+    const { invalidate } = mount();
+    fireEvent.click(buildAll());
+    await expectRefresh(invalidate);
+    api.preflight.mockResolvedValueOnce({ ...api.estimate, canQueue: false, message: 'Saved scripts exceed movie limits.' });
+    fireEvent.click(screen.getByRole('button', { name: 'Queue missing formats' }));
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('Saved scripts exceed movie limits.'));
+    expect(api.create).toHaveBeenCalledTimes(2);
+    expect(invalidate).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('movie-batch-queued')).toHaveTextContent('Queued successfully: 16:9 · 720p.');
+    expect(screen.getByRole('button', { name: 'Queue missing formats' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Dismiss batch summary' }));
+    expect(screen.queryByTestId('movie-batch-summary')).not.toBeInTheDocument();
+    expect(buildAll()).toBeEnabled();
+  });
+
   it.each([
     { cause: new Error('Movie storage is full.'), message: 'Movie storage is full.' },
     { cause: 'unexpected response', message: 'Could not queue movie.' },

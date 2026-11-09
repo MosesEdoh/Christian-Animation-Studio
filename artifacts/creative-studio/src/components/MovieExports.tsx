@@ -2,6 +2,15 @@ import { useRef, useState } from 'react';
 import { getPreflightStudioExportQueryKey, preflightStudioExport, usePreflightStudioExport, useCancelStudioExport, useCreateStudioExport, useDeleteStudioExport, useListStudioExports, getListStudioExportsQueryKey, type Episode, type StudioExport } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
 
+type MovieFormat = { aspectRatio: '16:9' | '9:16'; quality: '720p' | '1080p' };
+type MovieBatch = {
+  episodeId: number | null;
+  label: string;
+  queued: MovieFormat[];
+  remaining: MovieFormat[];
+};
+const formatLabel = (format: MovieFormat) => `${format.aspectRatio} · ${format.quality}`;
+
 export function MovieExports({ episodes }: { episodes: Episode[] }) {
   const cache = useQueryClient();
   const [episodeId, setEpisodeId] = useState('series');
@@ -10,6 +19,7 @@ export function MovieExports({ episodes }: { episodes: Episode[] }) {
   const [error, setError] = useState('');
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [queueing, setQueueing] = useState(false);
+  const [batch, setBatch] = useState<MovieBatch | null>(null);
   const queueLock = useRef(false);
   const estimateParams = {
     ...(episodeId === 'series' ? {} : { episodeId: Number(episodeId) }),
@@ -59,16 +69,23 @@ export function MovieExports({ episodes }: { episodes: Episode[] }) {
   }
   const ready = (jobs.data ?? []).filter(job => job.status === 'ready' && job.url);
   const selected = ready.find(job => job.id === selectedId) ?? ready[0];
-  async function queue(all: boolean, retry?: { episodeId: number | null; aspectRatio: '16:9' | '9:16'; quality: '720p' | '1080p' }) {
+  async function queue(all: boolean, retry?: { episodeId: number | null; aspectRatio: '16:9' | '9:16'; quality: '720p' | '1080p' }, resume?: MovieBatch) {
     if (queueLock.current) return;
     queueLock.current = true;
     setQueueing(true);
     setError('');
+    const targetId = resume ? resume.episodeId : retry ? retry.episodeId : episodeId === 'series' ? null : Number(episodeId);
+    const formats = resume ? resume.remaining : retry ? [{ aspectRatio: retry.aspectRatio, quality: retry.quality }] : all
+      ? (['16:9', '9:16'] as const).flatMap(ratio => (['720p', '1080p'] as const).map(size => ({ aspectRatio: ratio, quality: size })))
+      : [{ aspectRatio, quality }];
+    let progress: MovieBatch | null = resume ?? (all ? {
+      episodeId: targetId,
+      label: targetId === null ? 'Entire series' : `Episode ${episodes.find(episode => episode.id === targetId)?.number ?? targetId}`,
+      queued: [], remaining: formats,
+    } : null);
+    if (progress) setBatch(progress);
+    let queuedCount = 0;
     try {
-      const targetId = retry ? retry.episodeId : episodeId === 'series' ? null : Number(episodeId);
-      const formats = retry ? [{ aspectRatio: retry.aspectRatio, quality: retry.quality }] : all
-        ? (['16:9', '9:16'] as const).flatMap(ratio => (['720p', '1080p'] as const).map(size => ({ aspectRatio: ratio, quality: size })))
-        : [{ aspectRatio, quality }];
       // Refresh before queueing, including retries of a different selection.
       // Check every orientation before creating any of the batch's jobs.
       for (const ratio of new Set(formats.map(format => format.aspectRatio))) {
@@ -79,10 +96,23 @@ export function MovieExports({ episodes }: { episodes: Episode[] }) {
       }
       for (const format of formats) {
         await create.mutateAsync({ data: { episodeId: targetId, ...format } });
+        queuedCount++;
+        if (progress) {
+          progress = { ...progress, queued: [...progress.queued, format], remaining: formats.slice(queuedCount) };
+          setBatch(progress);
+        }
       }
-      await cache.invalidateQueries({ queryKey: getListStudioExportsQueryKey() });
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not queue movie.'); }
-    finally { queueLock.current = false; setQueueing(false); }
+    finally {
+      try {
+        if (queuedCount > 0) await cache.invalidateQueries({ queryKey: getListStudioExportsQueryKey() });
+      } catch {
+        setError(previous => `${previous} Could not refresh movie exports. Please refresh the list.`.trim());
+      } finally {
+        queueLock.current = false;
+        setQueueing(false);
+      }
+    }
   }
   return <section className="panel" style={{ marginTop: 24, padding: 24 }} data-testid="movie-exports">
     <span className="eyebrow">WATCHABLE EXPORTS</span>
@@ -101,9 +131,19 @@ export function MovieExports({ episodes }: { episodes: Episode[] }) {
     </div>
     <div className="video-actions" style={{ marginTop: 12 }}>
       <button className="btn btn-primary" data-testid="create-movie" onClick={() => queue(false)} disabled={queueing || estimate.isPending || estimate.isError || !estimate.data?.canQueue}>Build storyboard MP4</button>
-      <button className="btn btn-quiet" onClick={() => queue(true)} disabled={queueing || estimate.isPending || estimate.isError || !estimate.data?.canQueue}>Build all four formats</button>
+      <button className="btn btn-quiet" onClick={() => queue(true)} disabled={queueing || Boolean(batch?.remaining.length) || estimate.isPending || estimate.isError || !estimate.data?.canQueue}>Build all four formats</button>
     </div>
     {error && <p role="alert">{error}</p>}
+    {batch && <div aria-live="polite" data-testid="movie-batch-summary" style={{ marginTop: 12 }}>
+      <p>Four-format batch · {batch.label}</p>
+      <p data-testid="movie-batch-queued">Queued successfully: {batch.queued.length ? batch.queued.map(formatLabel).join(', ') : 'None'}.</p>
+      <p data-testid="movie-batch-missing">Not queued: {batch.remaining.length ? batch.remaining.map(formatLabel).join(', ') : 'None — all four formats are queued'}.</p>
+      {batch.remaining.length > 0 && <>
+        <p>Queue only the missing formats for {batch.label}. Already queued jobs will not be repeated.</p>
+        <button className="btn btn-primary" data-testid="queue-missing-movies" disabled={queueing} onClick={() => queue(false, undefined, batch)}>Queue missing formats</button>
+      </>}
+      <button className="btn btn-quiet" data-testid="dismiss-movie-batch" disabled={queueing} onClick={() => setBatch(null)}>Dismiss batch summary</button>
+    </div>}
     {jobs.isError && <p role="alert">Could not load movie exports. <button onClick={() => jobs.refetch()}>Retry</button></p>}
     {selected?.url && <div style={{ marginTop: 20 }}>
       <label htmlFor="movie-preview-select">Saved movie preview</label>
