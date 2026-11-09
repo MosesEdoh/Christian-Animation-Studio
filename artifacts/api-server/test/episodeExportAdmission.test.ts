@@ -9,7 +9,7 @@ import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import {
   acquireEpisodeExportLease, PostgresEpisodeAdmissionStore, EpisodeVideoBusyError,
-  type EpisodeAdmissionStore,
+  EpisodeExportAdmissionError, type EpisodeAdmissionStore, type EpisodeExportTelemetry,
 } from "../src/lib/episodeExportAdmission";
 
 const timing = { leaseMs: 250, renewMs: 30, safetyMs: 80 };
@@ -23,30 +23,65 @@ function fakeStore(): EpisodeAdmissionStore & { owners: Set<string> } {
   };
 }
 
+function captureTelemetry() {
+  const events: Array<{ level: string; fields: Record<string, unknown> }> = [];
+  const telemetry = {
+    info(fields: Record<string, unknown>) { events.push({ level: "info", fields }); },
+    warn(fields: Record<string, unknown>) { events.push({ level: "warn", fields }); },
+    error(fields: Record<string, unknown>) { events.push({ level: "error", fields }); },
+  } as unknown as EpisodeExportTelemetry;
+  return { events, telemetry };
+}
+
 test("admission fails closed on saturation or database failure", async () => {
   const store = fakeStore();
+  const { events, telemetry } = captureTelemetry();
   store.acquire = async () => false;
-  await assert.rejects(acquireEpisodeExportLease(store, timing), EpisodeVideoBusyError);
+  await assert.rejects(acquireEpisodeExportLease(store, timing, telemetry), EpisodeVideoBusyError);
+  assert.equal(events[0]?.fields.event, "episode_export.capacity_rejected");
+  assert.equal(events[0]?.fields.retryAfterSeconds, 15);
   store.acquire = async () => { throw new Error("Database unavailable"); };
-  await assert.rejects(acquireEpisodeExportLease(store, timing), /Database unavailable/);
+  await assert.rejects(acquireEpisodeExportLease(store, timing, telemetry), EpisodeExportAdmissionError);
+  assert.equal(events[1]?.fields.event, "episode_export.coordination_failure");
+  assert.equal(events[1]?.fields.failure, "admission_database_error");
+  assert.equal(events[1]?.fields.thresholdCount, 3);
+  assert.equal(events[1]?.fields.windowSeconds, 300);
+  assert.deepEqual(events[1]?.fields.groupBy, ["event", "failure", "pool"]);
+  assert.equal("err" in (events[1]?.fields ?? {}), false);
 });
 
 test("heartbeat loss aborts work, and release is idempotent", async () => {
   for (const failure of ["expired", "database"]) {
     const store = fakeStore();
+    const { events, telemetry } = captureTelemetry();
     let releases = 0;
     store.release = async owner => { releases++; store.owners.delete(owner); };
     store.renew = async () => {
       if (failure === "database") throw new Error("offline");
       return false;
     };
-    const lease = await acquireEpisodeExportLease(store, timing);
+    const lease = await acquireEpisodeExportLease(store, timing, telemetry);
     await delay(60);
     assert.equal(lease.signal.aborted, true);
     assert.throws(lease.assertOwned, /ownership was lost/);
     await Promise.all([lease.release(), lease.release()]);
     assert.equal(releases, 1);
+    assert.equal(events[0]?.fields.event, "episode_export.coordination_failure");
+    assert.equal(
+      events[0]?.fields.failure,
+      failure === "expired" ? "heartbeat_ownership_lost" : "heartbeat_database_error",
+    );
   }
+});
+
+test("release failures emit a coordination event while the lease expires naturally", async () => {
+  const store = fakeStore();
+  const { events, telemetry } = captureTelemetry();
+  store.release = async () => { throw new Error("Database unavailable"); };
+  const lease = await acquireEpisodeExportLease(store, timing, telemetry);
+  await lease.release();
+  assert.deepEqual(events.map(({ fields }) => fields.failure), ["release_database_error"]);
+  assert.equal(events[0]?.fields.event, "episode_export.coordination_failure");
 });
 
 test("a stalled heartbeat expires locally and cannot resurrect ownership with a late response", async () => {

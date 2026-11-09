@@ -489,7 +489,10 @@ test("concurrent HTTP exports reject overflow without downloads or temp files an
     let status = 200;
     let json: unknown;
     const req = Object.assign(new EventEmitter(), {
-      params: { id: "1" }, log: { error() { assert.fail("Unexpected server error"); } },
+      params: { id: "1" }, log: {
+        info() {},
+        error() { assert.fail("Unexpected server error"); },
+      },
     });
     const res = Object.assign(new Writable({ write(_chunk, _encoding, done) { done(); } }), {
       setHeader(key: string, value: string) { headers.set(key, value); },

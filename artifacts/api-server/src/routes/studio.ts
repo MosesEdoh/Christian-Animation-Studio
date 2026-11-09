@@ -59,6 +59,7 @@ import {
   assembleEpisodeVideo, removeEpisodeVideo, EpisodeVideoUnavailableError,
   EpisodeVideoBusyError, EPISODE_EXPORT_RETRY_SECONDS,
 } from "../lib/episodeVideo";
+import { EpisodeExportAdmissionError } from "../lib/episodeExportAdmission";
 import { episodeVideoClipsQuery } from "../lib/episodeVideoClips";
 
 const router: IRouter = Router();
@@ -906,6 +907,12 @@ router.get("/studio/episodes/:id/video", async (req, res): Promise<void> => {
     if (controller.signal.aborted || res.destroyed) return;
     const message = error instanceof Error ? error.message : "Episode video assembly failed.";
     if (error instanceof EpisodeVideoBusyError) {
+      req.log.info({
+        event: "episode_export.http_outcome",
+        outcome: "capacity_rejected",
+        route: "provider_clip",
+        retryAfterSeconds: EPISODE_EXPORT_RETRY_SECONDS,
+      }, "Provider-clip export was rejected at shared capacity");
       res.setHeader("Retry-After", String(EPISODE_EXPORT_RETRY_SECONDS));
       res.setHeader("Cache-Control", "private, no-store");
       res.status(503).json({
@@ -922,7 +929,16 @@ router.get("/studio/episodes/:id/video", async (req, res): Promise<void> => {
       });
       return;
     }
-    req.log.error({ err: error, episodeId }, "Episode video assembly failed");
+    if (error instanceof EpisodeExportAdmissionError) {
+      req.log.error({
+        event: "episode_export.http_outcome",
+        outcome: "admission_unavailable",
+        route: "provider_clip",
+      }, "Provider-clip export could not check shared capacity");
+    }
+    if (!(error instanceof EpisodeExportAdmissionError)) {
+      req.log.error({ err: error, episodeId }, "Episode video assembly failed");
+    }
     if (res.headersSent) res.destroy();
     else res.status(502).json({
       error: error instanceof Error && error.name === "TimeoutError"

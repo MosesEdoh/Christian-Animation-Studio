@@ -5,15 +5,32 @@ import { logger } from "./logger";
 
 export const MAX_CONCURRENT_EPISODE_EXPORTS = 2;
 export const EPISODE_EXPORT_RETRY_SECONDS = 15;
+export const EPISODE_EXPORT_POOL_NAME = "provider-clip-episode";
+export const EPISODE_EXPORT_COORDINATION_ALERT_THRESHOLD_COUNT = 3;
+export const EPISODE_EXPORT_COORDINATION_ALERT_WINDOW_SECONDS = 300;
+export const EPISODE_EXPORT_CAPACITY_SIGNAL_THRESHOLD_COUNT = 10;
 const LEASE_MS = 60_000;
 const RENEW_MS = 15_000;
 // Stop work well before another instance can reuse an expired lease.
 const SAFETY_MS = 10_000;
 
+const coordinationAlert = {
+  thresholdCount: EPISODE_EXPORT_COORDINATION_ALERT_THRESHOLD_COUNT,
+  windowSeconds: EPISODE_EXPORT_COORDINATION_ALERT_WINDOW_SECONDS,
+  groupBy: ["event", "failure", "pool"],
+} as const;
+
 export class EpisodeVideoBusyError extends Error {
   constructor() {
     super(`Episode exports are busy. Try again in ${EPISODE_EXPORT_RETRY_SECONDS} seconds.`);
     this.name = "EpisodeVideoBusyError";
+  }
+}
+
+export class EpisodeExportAdmissionError extends Error {
+  constructor() {
+    super("Episode export admission is temporarily unavailable.");
+    this.name = "EpisodeExportAdmissionError";
   }
 }
 
@@ -29,6 +46,8 @@ export interface EpisodeAdmissionStore {
   release(owner: string): Promise<void>;
 }
 
+export type EpisodeExportTelemetry = Pick<typeof logger, "info" | "warn" | "error">;
+
 // Lazily create the bounded pool; unit tests supply an explicit store and never
 // open database connections. Keep workspace imports static for bundle ordering.
 let database: ReturnType<typeof createBoundedDatabase> | undefined;
@@ -38,7 +57,7 @@ function getDatabase() {
 
 export class PostgresEpisodeAdmissionStore implements EpisodeAdmissionStore {
   constructor(
-    readonly poolName = "provider-clip-episode",
+    readonly poolName = EPISODE_EXPORT_POOL_NAME,
     readonly capacity = MAX_CONCURRENT_EPISODE_EXPORTS,
     readonly leaseMs = LEASE_MS,
   ) {
@@ -89,27 +108,62 @@ export class PostgresEpisodeAdmissionStore implements EpisodeAdmissionStore {
 export async function acquireEpisodeExportLease(
   store: EpisodeAdmissionStore,
   timing = { leaseMs: LEASE_MS, renewMs: RENEW_MS, safetyMs: SAFETY_MS },
+  telemetry: EpisodeExportTelemetry = logger,
 ): Promise<EpisodeExportLease> {
   const owner = randomUUID();
   const controller = new AbortController();
   let deadline = performance.now() + timing.leaseMs - timing.safetyMs;
-  if (!await store.acquire(owner)) throw new EpisodeVideoBusyError();
+  let acquired: boolean;
+  try {
+    acquired = await store.acquire(owner);
+  } catch {
+    telemetry.error({
+      event: "episode_export.coordination_failure",
+      failure: "admission_database_error",
+      pool: EPISODE_EXPORT_POOL_NAME,
+      ...coordinationAlert,
+    }, "Episode export admission database operation failed");
+    throw new EpisodeExportAdmissionError();
+  }
+  if (!acquired) {
+    telemetry.info({
+      event: "episode_export.capacity_rejected",
+      pool: EPISODE_EXPORT_POOL_NAME,
+      capacity: store instanceof PostgresEpisodeAdmissionStore ? store.capacity : MAX_CONCURRENT_EPISODE_EXPORTS,
+      retryAfterSeconds: EPISODE_EXPORT_RETRY_SECONDS,
+      signalThresholdCount: EPISODE_EXPORT_CAPACITY_SIGNAL_THRESHOLD_COUNT,
+      signalWindowSeconds: EPISODE_EXPORT_COORDINATION_ALERT_WINDOW_SECONDS,
+    }, "Episode export rejected at shared capacity");
+    throw new EpisodeVideoBusyError();
+  }
   let stopped = false;
   let renewing: Promise<void> | undefined;
   let renewal: NodeJS.Timeout | undefined;
   let watchdog: NodeJS.Timeout | undefined;
-  const lose = () => {
+  const lose = (failure: "heartbeat_ownership_lost" | "heartbeat_database_error" | "heartbeat_deadline_exceeded") => {
+    if (controller.signal.aborted) return;
     controller.abort(new Error("Episode export ownership was lost. Please retry the download."));
     clearTimeout(renewal);
     clearTimeout(watchdog);
+    const fields = {
+      event: "episode_export.coordination_failure",
+      failure,
+      pool: EPISODE_EXPORT_POOL_NAME,
+      ...coordinationAlert,
+    };
+    if (failure === "heartbeat_database_error") {
+      telemetry.error(fields, "Episode export heartbeat database operation failed");
+    } else {
+      telemetry.warn(fields, "Episode export heartbeat stopped owning its shared lease");
+    }
   };
   const assertOwned = () => {
-    if (performance.now() >= deadline) lose();
+    if (performance.now() >= deadline) lose("heartbeat_deadline_exceeded");
     controller.signal.throwIfAborted();
   };
   const armWatchdog = () => {
     clearTimeout(watchdog);
-    watchdog = setTimeout(lose, Math.max(0, deadline - performance.now()));
+    watchdog = setTimeout(() => lose("heartbeat_deadline_exceeded"), Math.max(0, deadline - performance.now()));
     watchdog.unref();
   };
   const schedule = () => {
@@ -122,12 +176,12 @@ export async function acquireEpisodeExportLease(
           if (stopped) return;
           // A late response cannot revive local ownership after the deadline.
           assertOwned();
-          if (!owned) { lose(); return; }
+          if (!owned) { lose("heartbeat_ownership_lost"); return; }
           deadline = started + timing.leaseMs - timing.safetyMs;
           armWatchdog();
           schedule();
         } catch {
-          if (!stopped) lose();
+          if (!stopped) lose("heartbeat_database_error");
         }
       })();
     }, timing.renewMs);
@@ -146,7 +200,12 @@ export async function acquireEpisodeExportLease(
       await store.release(owner);
     } catch {
       // Fail closed: the slot stays occupied until its database expiry.
-      logger.warn("Episode export lease release failed; waiting for lease expiry");
+      telemetry.error({
+        event: "episode_export.coordination_failure",
+        failure: "release_database_error",
+        pool: EPISODE_EXPORT_POOL_NAME,
+        ...coordinationAlert,
+      }, "Episode export lease release failed; waiting for lease expiry");
     }
   })();
   try {
