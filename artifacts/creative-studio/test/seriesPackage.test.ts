@@ -152,6 +152,69 @@ test('empty videos are never packaged and malformed reports produce an explicit 
   assert.match(report(files, 2), /clip report could not be read/);
 });
 
+test('a mid-body server interruption excludes the partial MP4 and continues packaging later episodes', async () => {
+  const data = bootstrap();
+  data.episodes.push(episode(2));
+  const controller = new AbortController();
+  let reads = 0;
+  const interrupted = new Response(new ReadableStream<Uint8Array>({
+    pull(stream) {
+      if (++reads === 1) stream.enqueue(new Uint8Array(playableVideo.subarray(0, 32)));
+      else stream.error(new TypeError('terminated'));
+    },
+  }, { highWaterMark: 0 }), { headers: mp4().headers });
+  assert.equal(interrupted.ok, true);
+  const requests: string[] = [];
+  mock.method(globalThis, 'fetch', async (input: string) => {
+    requests.push(input);
+    return input.includes('/1/video') ? interrupted : mp4([2]);
+  });
+
+  const files = unzipSync(await buildSeriesPackage(data, { ...options, signal: controller.signal }));
+  assert.equal(reads, 2);
+  assert.equal(interrupted.bodyUsed, true);
+  assert.equal(controller.signal.aborted, false);
+  assert.deepEqual(requests, ['/api/studio/episodes/1/video', '/api/studio/episodes/2/video']);
+  assert.equal(files[`${folder()}/episode.mp4`], undefined);
+  assert.deepEqual(Buffer.from(files[`${folder(2)}/episode.mp4`]), playableVideo);
+  assert.ok(files[`${folder()}/script.txt`]);
+  assert.ok(files[`${folder()}/shot-list.json`]);
+  assert.match(report(files), /Status: unavailable/);
+  assert.match(report(files), /service could not be reached; no MP4 was included/);
+  assert.match(report(files), /Video: not included/);
+  assert.match(report(files), /Clips assembled: none/);
+  assert.match(report(files, 2), /Status: ready/);
+  const entries = manifest(files).episodes;
+  assert.equal(entries[0].video, null);
+  assert.equal(entries[0].videoStatus, 'unavailable');
+  assert.deepEqual(entries[0].usedClipIds, []);
+  assert.equal(entries[1].video, `${folder(2)}/episode.mp4`);
+  assert.equal(entries[1].videoStatus, 'ready');
+  const summary = strFromU8(files['episode-video-reports.txt']);
+  assert.match(summary, /Episode 1: unavailable/);
+  assert.match(summary, /Episode 2: ready/);
+});
+
+test('a pre-header 502 timeout is reported verbatim while later episode MP4s are included', async () => {
+  const data = bootstrap();
+  data.episodes.push(episode(2));
+  const message = 'The episode export exceeded its total time limit. Please retry the download.';
+  mock.method(globalThis, 'fetch', async (input: string) => input.includes('/1/video')
+    ? Response.json({ error: message }, { status: 502 })
+    : mp4([2]));
+
+  const files = unzipSync(await buildSeriesPackage(data, options));
+  assert.equal(files[`${folder()}/episode.mp4`], undefined);
+  assert.ok(report(files).includes(message));
+  assert.match(report(files), /Status: unavailable/);
+  assert.match(report(files), /Video: not included/);
+  const entries = manifest(files).episodes;
+  assert.equal(entries[0].video, null);
+  assert.equal(entries[0].videoStatus, 'unavailable');
+  assert.equal(entries[1].videoStatus, 'ready');
+  assert.deepEqual(Buffer.from(files[`${folder(2)}/episode.mp4`]), playableVideo);
+});
+
 test('the cumulative ZIP limit keeps the first video and reports subsequent videos as not included', async () => {
   const data = bootstrap();
   data.episodes.push(episode(2));

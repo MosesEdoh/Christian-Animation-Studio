@@ -19,7 +19,7 @@ function browser() {
   const timers: Array<() => void> = [];
   let clicks = 0;
   const revoke = mock.method(URL, 'revokeObjectURL', () => {});
-  mock.method(URL, 'createObjectURL', (blob: Blob) => {
+  const createUrl = mock.method(URL, 'createObjectURL', (blob: Blob) => {
     assert.equal(blob.type, 'video/mp4');
     return 'blob:episode';
   });
@@ -43,7 +43,7 @@ function browser() {
     if (oldWindow) Object.defineProperty(globalThis, 'window', oldWindow);
     else Reflect.deleteProperty(globalThis, 'window');
   });
-  return { anchors, timers, revoke, clicks: () => clicks };
+  return { anchors, timers, revoke, createUrl, clicks: () => clicks };
 }
 
 test('downloads only the selected episode MP4, with credentials and a safe filename', async () => {
@@ -116,6 +116,53 @@ test('unavailable episodes show the explanation and skipped clips without saving
   assert.equal(result.failed, true);
   assert.match(result.message, /No downloadable, playable clips/);
   assert.deepEqual(result.skippedClips, skipped);
+  assert.equal(env.clicks(), 0);
+});
+
+test('a server interruption after MP4 bytes arrive never saves a partial movie and allows retry', async () => {
+  const env = browser();
+  const controller = new AbortController();
+  let reads = 0;
+  const response = new Response(new ReadableStream<Uint8Array>({
+    pull(stream) {
+      if (++reads === 1) stream.enqueue(new TextEncoder().encode('partial-mp4-bytes'));
+      else stream.error(new TypeError('terminated'));
+    },
+  }, { highWaterMark: 0 }), { headers: mp4().headers });
+  assert.equal(response.ok, true);
+  mock.method(globalThis, 'fetch', async () => response);
+
+  const result = await downloadEpisodeVideo(episode, controller.signal);
+  assert.equal(reads, 2);
+  assert.equal(response.bodyUsed, true);
+  assert.equal(controller.signal.aborted, false);
+  assert.equal(result.failed, true);
+  assert.match(result.message, /Check your connection and try again/);
+  assert.deepEqual(result.skippedClips, []);
+  assert.equal(env.createUrl.mock.callCount(), 0);
+  assert.equal(env.anchors.length, 0);
+  assert.equal(env.clicks(), 0);
+  assert.equal(env.timers.length, 0);
+
+  mock.method(globalThis, 'fetch', async () => mp4());
+  const retry = await downloadEpisodeVideo(episode, controller.signal);
+  assert.equal(retry.failed, undefined);
+  assert.match(retry.message, /download started/);
+  assert.equal(env.clicks(), 1);
+});
+
+test('a pre-header export timeout preserves the retryable 502 explanation without saving', async () => {
+  const env = browser();
+  const message = 'The episode export exceeded its total time limit. Please retry the download.';
+  mock.method(globalThis, 'fetch', async () =>
+    Response.json({ error: message }, { status: 502 }));
+
+  const result = await downloadEpisodeVideo(episode);
+  assert.equal(result.failed, true);
+  assert.equal(result.message, message);
+  assert.deepEqual(result.skippedClips, []);
+  assert.equal(env.createUrl.mock.callCount(), 0);
+  assert.equal(env.anchors.length, 0);
   assert.equal(env.clicks(), 0);
 });
 
