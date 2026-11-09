@@ -1,5 +1,5 @@
 export type CustomFetchOptions = RequestInit & {
-  responseType?: "json" | "text" | "blob" | "auto";
+  responseType?: "json" | "text" | "blob" | "auto" | "response";
 };
 
 export type ErrorType<T = unknown> = ApiError<T>;
@@ -64,7 +64,7 @@ function applyBaseUrl(input: RequestInfo | URL): RequestInfo | URL {
   if (!_baseUrl) return input;
   const url = resolveUrl(input);
   // Only prepend to relative paths (starting with /)
-  if (!url.startsWith("/")) return input;
+  if (!url.startsWith("/") || url.startsWith("//")) return input;
 
   const absolute = `${_baseUrl}${url}`;
   if (typeof input === "string") return absolute;
@@ -351,7 +351,15 @@ export async function customFetch<T = unknown>(
 
   // Attach bearer token when an auth getter is configured and no
   // Authorization header has been explicitly provided.
-  if (_authTokenGetter && !headers.has("authorization")) {
+  // A mobile token getter is not permission to send credentials to provider
+  // media/presigned URLs. Resolve and compare origins, never hostname prefixes.
+  let trustedApiOrigin = false;
+  if (_baseUrl) {
+    try {
+      trustedApiOrigin = new URL(resolveUrl(input), _baseUrl).origin === new URL(_baseUrl).origin;
+    } catch { /* Invalid URLs fail in fetch without reading a token. */ }
+  }
+  if (_authTokenGetter && trustedApiOrigin && !headers.has("authorization")) {
     const token = await _authTokenGetter();
     if (token) {
       headers.set("authorization", `Bearer ${token}`);
@@ -360,7 +368,11 @@ export async function customFetch<T = unknown>(
 
   const requestInfo = { method, url: resolveUrl(input) };
 
-  const response = await fetch(input, { ...init, method, headers });
+  const response = await fetch(input, { credentials: "include", ...init, method, headers });
+
+  // Downloads need status and report headers as well as binary bytes. Keep them
+  // on this same transport path; callers explicitly handle non-success statuses.
+  if (responseType === "response") return response as T;
 
   if (!response.ok) {
     const errorData = await parseErrorBody(response, method);

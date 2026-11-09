@@ -14,16 +14,17 @@ import { Fraunces_500Medium, Fraunces_600SemiBold } from '@expo-google-fonts/fra
 import { useFonts } from 'expo-font';
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
-import { setBaseUrl, setAuthTokenGetter } from '@workspace/api-client-react';
-import * as SecureStore from 'expo-secure-store';
-import { Platform } from 'react-native';
-import { AuthProvider, AuthGate, AUTH_TOKEN_KEY, apiOrigin } from '@/lib/auth';
+import { setBaseUrl } from '@workspace/api-client-react';
+import { ClerkProvider, ClerkLoaded } from '@clerk/expo';
+import { tokenCache } from '@clerk/expo/token-cache';
+import { MobileSession, AuthGate } from '@/lib/clerk';
 
 // Prevent the splash screen from auto-hiding before asset loading is complete.
 SplashScreen.preventAutoHideAsync();
 const apiDomain = process.env.EXPO_PUBLIC_DOMAIN;
-if (apiDomain) setBaseUrl(apiOrigin());
-if (Platform.OS !== 'web') setAuthTokenGetter(() => SecureStore.getItemAsync(AUTH_TOKEN_KEY));
+if (apiDomain) setBaseUrl(`https://${apiDomain}`);
+const publishableKey = process.env.EXPO_PUBLIC_CLERK_PUBLISHABLE_KEY!;
+const proxyUrl = process.env.EXPO_PUBLIC_CLERK_PROXY_URL || undefined;
 
 const queryClient = new QueryClient();
 
@@ -59,7 +60,9 @@ export default function RootLayout() {
         <QueryClientProvider client={queryClient}>
           <GestureHandlerRootView>
             <KeyboardProvider>
-              <AuthProvider><AuthGate><RootLayoutNav /></AuthGate></AuthProvider>
+              <ClerkProvider publishableKey={publishableKey} tokenCache={tokenCache} proxyUrl={proxyUrl}>
+                <ClerkLoaded><MobileSession><AuthGate><RootLayoutNav /></AuthGate></MobileSession></ClerkLoaded>
+              </ClerkProvider>
             </KeyboardProvider>
           </GestureHandlerRootView>
         </QueryClientProvider>

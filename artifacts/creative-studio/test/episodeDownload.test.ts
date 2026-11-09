@@ -54,7 +54,7 @@ test('downloads only the selected episode MP4, with credentials and a safe filen
     return mp4();
   });
   const result = await downloadEpisodeVideo(episode);
-  assert.deepEqual(requests, [['/api/studio/episodes/42/video', { credentials: 'include', signal: undefined }]]);
+  assert.deepEqual(requests, [['/api/studio/episodes/42/video', { credentials: 'include', signal: undefined, method: 'GET', headers: new Headers() }]]);
   assert.equal(env.anchors[0].download, 'E03-Hope - lumière.mp4');
   assert.equal(env.anchors[0].href, 'blob:episode');
   assert.equal(env.clicks(), 1);

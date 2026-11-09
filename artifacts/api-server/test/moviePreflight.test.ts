@@ -3,9 +3,10 @@ import { afterEach, beforeEach, mock, test } from "node:test";
 import express from "express";
 import { PgDialect } from "drizzle-orm/pg-core";
 import type { SQL } from "drizzle-orm";
+import { clerkSession } from "./helpers/clerkSession";
 
 process.env.DATABASE_URL ??= "postgresql://test:test@localhost/unused";
-const { studioEpisodesTable, studioScenesTable } = await import("@workspace/db");
+const { db, studioEpisodesTable, studioScenesTable } = await import("@workspace/db");
 const { preflightDb, estimateMovie } = await import("../src/lib/moviePreflight");
 const { default: routes } = await import("../src/routes/index");
 const { movieScenePages, moviePageSeconds } = await import("../src/lib/movieLayout");
@@ -18,6 +19,7 @@ let reads: number;
 let fail: boolean;
 
 beforeEach(() => {
+  mock.method(db, "select", () => ({ from: () => ({ where: () => ({ limit: async () => [{ id: "creator" }] }) }) }));
   episodes = [{ id: 7, summary: "A short summary." }];
   scenes = [{ id: 1, episodeId: 7, duration: "1:00", text: "Hello world." }];
   signedIn = approved = true;
@@ -111,8 +113,7 @@ test("bounds large script text and handles missing or incomplete episodes", asyn
 async function request(query: string) {
   const app = express();
   app.use((req, _res, next) => {
-    req.isAuthenticated = (() => signedIn) as typeof req.isAuthenticated;
-    req.user = { email: approved ? "allowed@example.test" : "denied@example.test" } as typeof req.user;
+    Object.assign(req, clerkSession(signedIn ? { userId: "creator", email: approved ? "allowed@example.test" : "denied@example.test" } : null));
     req.log = { warn() {} } as typeof req.log;
     next();
   });

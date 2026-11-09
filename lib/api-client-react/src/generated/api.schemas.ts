@@ -5,26 +5,6 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
-export interface MobileTokenExchangeInput {
-  /** @minLength 1 */
-  code: string;
-  /** @minLength 32 */
-  code_verifier: string;
-  redirect_uri: string;
-  /** @minLength 1 */
-  state: string;
-  /** @minLength 1 */
-  nonce: string;
-}
-
-export interface MobileSession {
-  token: string;
-}
-
-export interface LogoutSuccess {
-  success: boolean;
-}
-
 export interface StudioExportPreflight {
   canQueue: boolean;
   message: string;
@@ -118,10 +98,6 @@ export interface AuthUser {
   lastName: string | null;
   /** @nullable */
   profileImageUrl: string | null;
-}
-
-export interface AuthUserEnvelope {
-  user: AuthUser | null;
 }
 
 export interface UploadUrlRequest {
@@ -521,13 +497,5 @@ export type DownloadStudioEpisodeVideo503 = {
   code: DownloadStudioEpisodeVideo503Code;
   /** @minimum 1 */
   retryAfterSeconds: number;
-};
-
-export type BeginBrowserLoginParams = {
-returnTo?: string;
-};
-
-export type LogoutBrowserSessionParams = {
-returnTo?: string;
 };
 

@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { assetSrc, downloadSeriesPackage } from './lib/seriesPackage';
-import { useAuth } from '@workspace/replit-auth-web';
+import { useUser } from '@clerk/react';
+import { ClerkProviderWithRoutes, ClerkQueryClientCacheInvalidator, SignInPage, SignUpPage, LogoutButton } from './components/ClerkAuth';
 import { MovieExports } from './components/MovieExports';
 import { EpisodeDownload } from './components/EpisodeDownload';
 import {
@@ -39,6 +40,7 @@ import {
 } from 'lucide-react';
 import {
   getGetStudioBootstrapQueryKey,
+  customFetch,
   useCheckSceneContent,
   useCompleteStudioEpisode,
   useCreateStudioAsset,
@@ -72,7 +74,7 @@ import { ErrorBoundary } from '@/components/error-boundary';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import NotFound from '@/pages/not-found';
-import { Route, Switch, Router as WouterRouter, useLocation } from 'wouter';
+import { Route, Switch, Redirect, Router as WouterRouter, useLocation, Link } from 'wouter';
 
 const queryClient = new QueryClient();
 
@@ -103,7 +105,10 @@ function AppRouter() {
   return (
     <RoutedErrorBoundary>
       <Switch>
-        <Route path="/" component={StudioGate} />
+        <Route path="/" component={Home} />
+        <Route path="/sign-in/*?" component={SignInPage} />
+        <Route path="/sign-up/*?" component={SignUpPage} />
+        <Route path="/studio/*?" component={StudioGate} />
         <Route component={NotFound} />
       </Switch>
     </RoutedErrorBoundary>
@@ -115,23 +120,34 @@ function RoutedErrorBoundary({ children }: { children: ReactNode }) {
   return <ErrorBoundary resetKey={location}>{children}</ErrorBoundary>;
 }
 
-function StudioGate() {
-  const auth = useAuth();
-  const cache = useQueryClient();
-  useEffect(() => { if (!auth.user) cache.clear(); }, [auth.user, cache]);
-  if (auth.isLoading) return <div className="content-wrap"><p>Checking private studio access…</p></div>;
-  if (!auth.user) return <main className="content-wrap" style={{ maxWidth: 620, margin: '10vh auto' }}>
+function Home() {
+  const { isLoaded, isSignedIn } = useUser();
+  if (!isLoaded) return <p>Loading…</p>;
+  if (isSignedIn) return <Redirect to="/studio" />;
+  return <main className="content-wrap" style={{ maxWidth: 620, margin: '10vh auto' }}>
     <span className="eyebrow">FRAME & FAITH</span><h1>Your private studio</h1>
     <p>Sign in with your approved account to view scripts, references, videos, and downloads.</p>
     {new URLSearchParams(window.location.search).get('access') === 'denied' && <p role="alert">That account is not approved for this studio. Please use your approved account.</p>}
-    {auth.error && <p role="alert">{auth.error}</p>}
-    <button className="btn btn-primary" onClick={auth.login} data-testid="login-btn">Sign in</button>
+    <Link className="btn btn-primary" href="/sign-in" data-testid="login-btn">Sign in</Link>
+    <Link className="btn btn-quiet" href="/sign-up">Create account</Link>
   </main>;
-  return <StudioWorkspace key={auth.user.id} authUser={auth.user} />;
+}
+function StudioGate() {
+  const { user, isLoaded } = useUser();
+  if (!isLoaded) return <p>Checking private studio access…</p>;
+  if (!user) return <Redirect to="/" />;
+  const authUser: AuthUser = {
+    id: user.externalId ?? user.id, email: user.primaryEmailAddress?.emailAddress ?? null,
+    firstName: user.firstName, lastName: user.lastName, profileImageUrl: user.imageUrl,
+  };
+  return <StudioWorkspace key={authUser.id} authUser={authUser} />;
 }
 
 function StudioWorkspace({ authUser }: { authUser: AuthUser }) {
-  const [view, setView] = useState<View>('dashboard');
+  const [location, setLocation] = useLocation();
+  const requestedView = location.split('/')[2];
+  const view: View = navItems.some(item => item.id === requestedView) ? requestedView as View : 'dashboard';
+  const setView = (next: View) => setLocation(next === 'dashboard' ? '/studio' : `/studio/${next}`);
   const [toast, setToast] = useState<ToastState | null>(null);
   const [showProjectEditor, setShowProjectEditor] = useState(false);
   const [showCharacterEditor, setShowCharacterEditor] = useState(false);
@@ -533,7 +549,9 @@ function StudioWorkspace({ authUser }: { authUser: AuthUser }) {
     const upload = await requestUploadUrl.mutateAsync({
       data: { name: file.name, size: file.size, contentType: file.type },
     });
-    const put = await fetch(upload.uploadURL, {
+    const put = await customFetch<Response>(upload.uploadURL, {
+      responseType: 'response',
+      credentials: 'omit',
       method: 'PUT',
       headers: { 'Content-Type': file.type },
       body: file,
@@ -866,7 +884,7 @@ function StudioWorkspace({ authUser }: { authUser: AuthUser }) {
           <div className="error-panel" data-testid="panel-bootstrap-error">
             <h2>Studio access unavailable</h2>
             <p>{bootstrapQuery.error instanceof Error ? bootstrapQuery.error.message : 'Sign in with your approved account or try reconnecting.'}</p>
-            <a href="/api/logout?returnTo=/" className="btn btn-quiet">Sign out</a>
+            <LogoutButton />
             <button
               type="button"
               className="btn btn-primary"
@@ -983,9 +1001,9 @@ function WorkspaceFrame({
             <div className="topbar-actions">
               <span className="status-pill"><span className="signal-dot" /> {project?.seasonLabel ?? 'Workspace ready'}</span>
               {!authChecked ? null : authUser ? (
-                <a className="btn btn-quiet" href={`/api/logout?returnTo=${encodeURIComponent(window.location.pathname)}`} data-testid="link-sign-out">Sign out</a>
+                <LogoutButton testId="link-sign-out" />
               ) : (
-                <a className="btn btn-quiet" href={`/api/login?returnTo=${encodeURIComponent(window.location.pathname)}`} data-testid="link-sign-in">Sign in to save images</a>
+                <Link className="btn btn-quiet" href="/sign-in" data-testid="link-sign-in">Sign in to save images</Link>
               )}
               <div className="avatar" data-testid="text-creator-avatar">{authUser?.firstName?.slice(0, 1) ?? 'JR'}</div>
             </div>
@@ -1826,7 +1844,10 @@ function App() {
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
         <WouterRouter base={import.meta.env.BASE_URL.replace(/\/$/, '')}>
-          <AppRouter />
+          <ClerkProviderWithRoutes>
+            <ClerkQueryClientCacheInvalidator />
+            <AppRouter />
+          </ClerkProviderWithRoutes>
         </WouterRouter>
         <Toaster />
       </TooltipProvider>

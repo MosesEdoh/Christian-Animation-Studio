@@ -77,7 +77,7 @@ test('a ready archive contains a playable MP4, scripts, shot lists, and consiste
   assert.equal(entry.videoReport, `${folder()}/episode-video-report.txt`);
   assert.deepEqual(entry.usedClipIds, [1]);
   assert.deepEqual(entry.unavailableVideoClips, []);
-  assert.deepEqual(requests, [{ input: '/api/studio/episodes/1/video', init: { credentials: 'include', signal: undefined } }]);
+  assert.deepEqual(requests, [{ input: '/api/studio/episodes/1/video', init: { credentials: 'include', signal: undefined, method: 'GET', headers: new Headers() } }]);
 });
 
 test('shot lists and scripts use scene and shot numbers, not database IDs or array order', async () => {
@@ -246,8 +246,8 @@ test('failed provider URLs are retained as links, with private references includ
   assert.equal(strFromU8(files['references/0005-frame.png']), 'reference');
   assert.match(strFromU8(files['clip-links.txt']), /Clip 1.*https:\/\/provider.example\/expired.mp4/);
   assert.equal(files['clips/clip-0001.mp4'], undefined);
-  assert.deepEqual(calls[1], ['/api/storage/objects/reference', { credentials: 'include', signal: undefined }]);
-  assert.deepEqual(calls[2][1], { credentials: 'omit', signal: undefined });
+  assert.deepEqual(calls[1], ['/api/storage/objects/reference', { credentials: 'include', signal: undefined, method: 'GET', headers: new Headers() }]);
+  assert.deepEqual(calls[2][1], { credentials: 'omit', signal: undefined, method: 'GET', headers: new Headers() });
   assert.equal(assetSrc('/objects/a'), '/api/storage/objects/a');
 });
 

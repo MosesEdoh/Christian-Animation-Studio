@@ -29,7 +29,7 @@ Private creative workspace for writing, directing, storyboarding, and generating
 - `artifacts/creative-studio/src/index.css` — evening storyboard room visual system
 - `artifacts/api-server/src/routes/studio.ts` — studio bootstrap, AI actions, and clip generation routes
 - `artifacts/api-server/src/routes/storage.ts` — signed private asset uploads and protected reads
-- `artifacts/api-server/src/routes/auth.ts` — Replit OIDC browser sign-in and sessions
+- `artifacts/api-server/src/middlewares/requireAuth.ts` — Clerk session-to-local-user bridge and first-request provisioning
 - `artifacts/api-server/src/lib/ai.ts` — direct Gemini client with transient retry handling
 - `artifacts/api-server/src/lib/video-provider.ts` — swappable mock / Runway / Luma / Pika adapter
 - `lib/api-spec/openapi.yaml` — source-of-truth API contract
@@ -42,7 +42,10 @@ Private creative workspace for writing, directing, storyboarding, and generating
 - Gemini text actions run server-side so the API key never reaches the browser.
 - Video generation is isolated behind `video-provider.ts`; `VIDEO_PROVIDER=mock` keeps local development usable until a provider is configured.
 - Reference images are uploaded directly to private App Storage using presigned URLs; Postgres stores object paths and metadata, not image bytes.
-- Reference uploads and private asset reads require an authenticated Replit session.
+- Authentication uses Replit-managed Clerk: web uses same-origin session cookies, Expo uses bearer tokens from Clerk's secure token cache. Browser sign-in/sign-up live at `/sign-in` and `/sign-up`; signed-in creators land at `/studio`.
+- Clerk proxy configuration is injected by managed publishing, not development secrets: `VITE_CLERK_PROXY_URL` for web and `CLERK_PROXY_URL` forwarded to `EXPO_PUBLIC_CLERK_PROXY_URL` for Expo. Empty development values are expected; do not hardcode a proxy fallback.
+- Local users and legacy sessions tables are retained. Verified `sessionClaims.userId` resolves the original local ID; Clerk native IDs are only for Clerk APIs. Identity fields are read from Clerk, not re-synced into local rows.
+- Reference uploads and private asset reads require an authenticated Clerk session and the existing approved-email access gate (`STUDIO_ALLOWED_EMAILS`).
 - The series ZIP export includes scripts, shot lists, character data, reference images, and provider clips when they are browser-downloadable; otherwise it records provider URLs.
 - Scene headings, intentions, scripts, and storyboard-card edits/order are stored in Postgres; unsaved script edits save before changing scenes or leaving the editor.
 - Difficult faith questions are explored in a Bible-grounded, broadly Christian writers’ tool; the question is sent to Gemini for generation but is not saved to the studio database.

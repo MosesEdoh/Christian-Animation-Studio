@@ -332,7 +332,7 @@ router.get("/studio/bootstrap", async (req, res): Promise<void> => {
 });
 
 router.post("/studio/assets", async (req, res): Promise<void> => {
-  if (!req.isAuthenticated()) {
+  if (!req.dbUser) {
     res.status(401).json({ error: "Sign in to save reference images" });
     return;
   }

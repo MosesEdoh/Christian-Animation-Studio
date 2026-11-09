@@ -7,8 +7,15 @@ import { downloadSeriesPackage } from '../src/lib/seriesPackage';
 import { bootstrap, clip, episode, otherEpisode, shot } from './episodeFixtures';
 
 const state = vi.hoisted(() => ({ data: undefined as StudioBootstrap | undefined }));
-vi.mock('@workspace/replit-auth-web', () => ({
-  useAuth: () => ({ user: { id: 'creator', firstName: 'Creator' }, isLoading: false }),
+vi.mock('@clerk/react', () => ({
+  useUser: () => ({ user: { id: 'creator', externalId: null, firstName: 'Creator', primaryEmailAddress: { emailAddress: 'creator@example.test' } }, isLoaded: true }),
+}));
+vi.mock('../src/components/ClerkAuth', () => ({
+  ClerkProviderWithRoutes: ({ children }: { children: React.ReactNode }) => children,
+  ClerkQueryClientCacheInvalidator: () => null,
+  SignInPage: () => null,
+  SignUpPage: () => null,
+  LogoutButton: () => <button>Sign out</button>,
 }));
 vi.mock('@workspace/api-client-react', async importOriginal => {
   const actual = await importOriginal<typeof import('@workspace/api-client-react')>();
@@ -49,6 +56,7 @@ const unavailable: Array<[string, Partial<Clip>]> = [
 ];
 
 beforeEach(() => {
+  window.history.replaceState(null, '', '/studio');
   state.data = structuredClone(bootstrap);
   vi.mocked(downloadEpisodeVideo).mockReset();
   vi.mocked(downloadSeriesPackage).mockReset();

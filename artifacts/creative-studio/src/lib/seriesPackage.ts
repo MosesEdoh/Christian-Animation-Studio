@@ -1,5 +1,6 @@
 import { zipSync, strToU8 } from 'fflate';
 import type { StudioBootstrap } from '@workspace/api-client-react';
+import { customFetch } from '@workspace/api-client-react';
 
 export function assetSrc(objectPath: string): string {
   return objectPath.startsWith('/objects/') ? `/api/storage${objectPath}` : objectPath;
@@ -58,7 +59,8 @@ export async function buildSeriesPackage(
     let skippedClips: Array<{ clipId: number; provider: string; reason: string }> = [];
     let videoMessage = 'No downloadable clips are available for this episode.';
     try {
-      const response = await fetch(`/api/studio/episodes/${episode.id}/video`, {
+      const response = await customFetch<Response>(`/api/studio/episodes/${episode.id}/video`, {
+        responseType: 'response',
         credentials: 'include',
         signal,
       });
@@ -164,7 +166,7 @@ export async function buildSeriesPackage(
   const clipLinks: string[] = [];
   for (const asset of bootstrap.assets) {
     signal?.throwIfAborted();
-    const response = await fetch(assetSrc(asset.objectPath), { credentials: 'include', signal });
+    const response = await customFetch<Response>(assetSrc(asset.objectPath), { responseType: 'response', credentials: 'include', signal });
     signal?.throwIfAborted();
     if (!response.ok) {
       throw new Error(response.status === 401
@@ -186,7 +188,7 @@ export async function buildSeriesPackage(
       if (clipUrl.protocol !== 'https:' && clipUrl.origin !== origin) {
         throw new Error('Unsupported video URL');
       }
-      const response = await fetch(clipUrl, { credentials: clipUrl.origin === origin ? 'include' : 'omit', signal });
+      const response = await customFetch<Response>(clipUrl, { responseType: 'response', credentials: clipUrl.origin === origin ? 'include' : 'omit', signal });
       signal?.throwIfAborted();
       const contentLength = Number(response.headers.get('content-length') ?? 0);
       if (!response.ok || (contentLength && downloadedVideoBytes + contentLength > maxVideoBytes)) {

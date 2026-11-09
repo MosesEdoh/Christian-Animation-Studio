@@ -1,11 +1,14 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Platform, Pressable, Text, View, ActivityIndicator } from 'react-native';
 import { useVideoPlayer, VideoView } from 'expo-video';
 import { useEvent } from 'expo';
 import * as FileSystem from 'expo-file-system/legacy';
 import * as Sharing from 'expo-sharing';
 import { useColors } from '@/hooks/useColors';
-import { mediaUrl, useAuth } from '@/lib/auth';
+import { mediaUrl } from '@/lib/clerk';
+import { mediaSource } from '@/lib/media';
+import { useAuth } from '@clerk/expo';
+import { customFetch } from '@workspace/api-client-react';
 
 export function PrivateVideo({ url, label }: { url: string; label: string }) {
   const auth = useAuth();
@@ -13,13 +16,20 @@ export function PrivateVideo({ url, label }: { url: string; label: string }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState('');
   const uri = mediaUrl(url);
-  const player = useVideoPlayer({ uri, headers: auth.headers }, instance => { instance.loop = false; });
+  const player = useVideoPlayer(null, instance => { instance.loop = false; });
+  useEffect(() => {
+    let active = true;
+    void mediaSource(url, `https://${process.env.EXPO_PUBLIC_DOMAIN}`, auth.getToken).then(source => {
+      if (active) return player.replaceAsync(source);
+    }).catch(() => { if (active) setError('Could not load this video. Please sign in again.'); });
+    return () => { active = false; };
+  }, [uri, url, auth.getToken, player]);
   const { isPlaying } = useEvent(player, 'playingChange', { isPlaying: player.playing });
   async function download() {
     setError(''); setPending(true);
     try {
       if (Platform.OS === 'web') {
-        const response = await fetch(uri, { credentials: 'include' });
+        const response = await customFetch<Response>(uri, { responseType: 'response', credentials: 'omit' });
         if (!response.ok) throw new Error('Sign in again to download this video.');
         const objectUrl = URL.createObjectURL(await response.blob());
         const anchor = document.createElement('a'); anchor.href = objectUrl; anchor.download = `${label.replace(/[^a-z0-9-]/gi, '-')}.mp4`; anchor.click();
@@ -27,7 +37,8 @@ export function PrivateVideo({ url, label }: { url: string; label: string }) {
       } else {
         if (!FileSystem.cacheDirectory) throw new Error('File cache is unavailable.');
         const path = `${FileSystem.cacheDirectory}faith-video-${Date.now()}.mp4`;
-        const result = await FileSystem.downloadAsync(uri, path, { headers: auth.headers });
+        const source = await mediaSource(url, `https://${process.env.EXPO_PUBLIC_DOMAIN}`, auth.getToken);
+        const result = await FileSystem.downloadAsync(source.uri, path, { headers: source.headers });
         if (result.status !== 200) { await FileSystem.deleteAsync(path, { idempotent: true }); throw new Error('Video download failed. Please sign in again.'); }
         if (!(await Sharing.isAvailableAsync())) throw new Error('File sharing is unavailable on this device.');
         await Sharing.shareAsync(result.uri, { mimeType: 'video/mp4', UTI: 'public.mpeg-4' });

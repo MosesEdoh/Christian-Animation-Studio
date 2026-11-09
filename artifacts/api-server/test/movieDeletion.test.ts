@@ -3,9 +3,10 @@ import { afterEach, beforeEach, mock, test } from "node:test";
 import express from "express";
 import { PgDialect } from "drizzle-orm/pg-core";
 import type { SQL } from "drizzle-orm";
+import { clerkSession } from "./helpers/clerkSession";
 
 process.env.DATABASE_URL ??= "postgresql://test:test@localhost/unused";
-const { db, studioExportsTable } = await import("@workspace/db");
+const { db, studioExportsTable, usersTable } = await import("@workspace/db");
 const { default: routes } = await import("../src/routes/index");
 const { ObjectStorageService, ObjectNotFoundError } = await import("../src/lib/objectStorage");
 type Row = typeof studioExportsTable.$inferSelect;
@@ -31,7 +32,9 @@ beforeEach(() => {
   databaseError = false;
   signedIn = approved = true;
   mock.method(db, "select", () => ({
-    from: () => ({ where: async (predicate: SQL) => rows.filter(row => matches(row, predicate)) }),
+    from: (table: unknown) => table === usersTable
+      ? { where: () => ({ limit: async () => [{ id: "creator" }] }) }
+      : { where: async (predicate: SQL) => rows.filter(row => matches(row, predicate)) },
   }));
   mock.method(db, "delete", () => ({
     where: async (predicate: SQL) => {
@@ -55,8 +58,7 @@ async function request(id: string) {
   const app = express();
   // Exercise the real parent router's protection, not a test-only route guard.
   app.use((req, _res, next) => {
-    req.isAuthenticated = (() => signedIn) as typeof req.isAuthenticated;
-    req.user = { email: approved ? "allowed@example.test" : "denied@example.test" } as typeof req.user;
+    Object.assign(req, clerkSession(signedIn ? { userId: "creator", email: approved ? "allowed@example.test" : "denied@example.test" } : null));
     req.log = { error() {} } as typeof req.log;
     next();
   });

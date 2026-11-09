@@ -1,3 +1,4 @@
+import { customFetch } from '@workspace/api-client-react';
 export type EpisodeVideoIssue = { clipId: number; provider: string; reason: string };
 export type EpisodeDownloadResult = {
   message: string;
@@ -22,7 +23,8 @@ export async function downloadEpisodeVideo(
 ): Promise<EpisodeDownloadResult> {
   try {
     signal?.throwIfAborted();
-    const response = await fetch(`/api/studio/episodes/${episode.id}/video`, {
+    const response = await customFetch<Response>(`/api/studio/episodes/${episode.id}/video`, {
+      responseType: 'response',
       credentials: 'include',
       signal,
     });

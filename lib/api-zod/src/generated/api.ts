@@ -8,31 +8,6 @@
 import * as zod from 'zod';
 
 
-
-export const exchangeMobileAuthorizationCodeBodyCodeVerifierMin = 32;
-
-
-
-
-
-export const ExchangeMobileAuthorizationCodeBody = zod.object({
-  "code": zod.string().min(1),
-  "code_verifier": zod.string().min(exchangeMobileAuthorizationCodeBodyCodeVerifierMin),
-  "redirect_uri": zod.url(),
-  "state": zod.string().min(1),
-  "nonce": zod.string().min(1)
-})
-
-export const ExchangeMobileAuthorizationCodeResponse = zod.object({
-  "token": zod.string()
-})
-
-
-export const LogoutMobileSessionResponse = zod.object({
-  "success": zod.boolean()
-})
-
-
 export const ListStudioExportsResponseItem = zod.object({
   "id": zod.int(),
   "episodeId": zod.int().nullable(),
@@ -146,46 +121,6 @@ export const DownloadStudioEpisodeVideoResponse = zod.unknown()
 export const HealthCheckResponse = zod.object({
   "status": zod.string()
 })
-
-
-/**
- * @summary Get the current signed-in user
- */
-export const GetCurrentAuthUserResponse = zod.object({
-  "user": zod.union([zod.object({
-  "id": zod.string(),
-  "email": zod.string().nullable(),
-  "firstName": zod.string().nullable(),
-  "lastName": zod.string().nullable(),
-  "profileImageUrl": zod.string().nullable()
-}),zod.null()])
-})
-
-
-/**
- * @summary Start browser sign-in
- */
-export const BeginBrowserLoginQueryParams = zod.object({
-  "returnTo": zod.coerce.string().optional()
-})
-
-export const BeginBrowserLoginResponse = zod.void()
-
-
-/**
- * @summary Complete browser sign-in
- */
-export const HandleBrowserLoginCallbackResponse = zod.void()
-
-
-/**
- * @summary Sign out
- */
-export const LogoutBrowserSessionQueryParams = zod.object({
-  "returnTo": zod.coerce.string().optional()
-})
-
-export const LogoutBrowserSessionResponse = zod.void()
 
 
 /**

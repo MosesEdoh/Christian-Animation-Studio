@@ -19,31 +19,6 @@ tags:
   - name: storage
     description: Persistent studio asset uploads
 paths:
-  /mobile-auth/token-exchange:
-    post:
-      operationId: exchangeMobileAuthorizationCode
-      tags: [auth]
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/MobileTokenExchangeInput" }
-      responses:
-        "200":
-          description: Authenticated mobile session
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/MobileSession" }
-  /mobile-auth/logout:
-    post:
-      operationId: logoutMobileSession
-      tags: [auth]
-      responses:
-        "200":
-          description: Session removed
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/LogoutSuccess" }
   /studio/exports:
     get:
       operationId: listStudioExports
@@ -217,52 +192,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
-  /auth/user:
-    get:
-      operationId: getCurrentAuthUser
-      tags: [auth]
-      summary: Get the current signed-in user
-      responses:
-        "200":
-          description: Authentication state
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AuthUserEnvelope"
-  /login:
-    get:
-      operationId: beginBrowserLogin
-      tags: [auth]
-      summary: Start browser sign-in
-      parameters:
-        - name: returnTo
-          in: query
-          required: false
-          schema: { type: string }
-      responses:
-        "302":
-          description: Redirect to sign-in
-  /callback:
-    get:
-      operationId: handleBrowserLoginCallback
-      tags: [auth]
-      summary: Complete browser sign-in
-      responses:
-        "302":
-          description: Redirect to the workspace
-  /logout:
-    get:
-      operationId: logoutBrowserSession
-      tags: [auth]
-      summary: Sign out
-      parameters:
-        - name: returnTo
-          in: query
-          required: false
-          schema: { type: string }
-      responses:
-        "302":
-          description: Redirect after sign-out
   /storage/uploads/request-url:
     post:
       operationId: requestUploadUrl
@@ -608,25 +537,6 @@ components:
       schema:
         type: integer
   schemas:
-    MobileTokenExchangeInput:
-      type: object
-      required: [code, code_verifier, redirect_uri, state, nonce]
-      properties:
-        code: { type: string, minLength: 1 }
-        code_verifier: { type: string, minLength: 32 }
-        redirect_uri: { type: string, format: uri }
-        state: { type: string, minLength: 1 }
-        nonce: { type: string, minLength: 1 }
-    MobileSession:
-      type: object
-      required: [token]
-      properties:
-        token: { type: string }
-    LogoutSuccess:
-      type: object
-      required: [success]
-      properties:
-        success: { type: boolean }
     StudioExportPreflight:
       type: object
       required: [canQueue, message, cards, playbackSeconds, cardLimit, playbackLimitSeconds]
@@ -671,14 +581,6 @@ components:
         lastName: { type: ["string", "null"] }
         profileImageUrl: { type: ["string", "null"] }
       required: [id, email, firstName, lastName, profileImageUrl]
-    AuthUserEnvelope:
-      type: object
-      properties:
-        user:
-          oneOf:
-            - $ref: "#/components/schemas/AuthUser"
-            - type: "null"
-      required: [user]
     UploadUrlRequest:
       type: object
       properties:

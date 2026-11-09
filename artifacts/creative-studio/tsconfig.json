@@ -15,7 +15,6 @@
     }
   },
   "references": [
-    { "path": "../../lib/replit-auth-web" },
     {
       "path": "../../lib/api-client-react"
     }
