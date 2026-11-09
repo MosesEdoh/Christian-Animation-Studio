@@ -1,0 +1,16 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "0jZvle7wmpf93jDdqzO5J"
+uri = "file://generated-artifacts/google-omni-smoke-test.mp4"
+type = "video"
+title = "Google video-generation test sample"
+description = "A real three-second Gemini Omni Flash sample at 640×360, with H.264 video and AAC audio. MP4 probing and full-file decoding both passed."
+logical_id = "e79525a7-0e05-4a17-8700-cc04c8c592df"
+content_hash = "sha256:929a77ec1095f5358bf5f64967eaed2e57b002f8992081b35f22d034c2ecc206"
+size = 1372420
+mtime_ms = 1794257982537
+storage_uri = "gcs://replit-rams-assets-archer/rams/assets/repl:ab77bc58-8742-4471-9441-f1a0f4728f51/e79525a7-0e05-4a17-8700-cc04c8c592df/dada497c-169a-4002-9388-52aa08054e0b"
+storage_version_token = "1794257997900588"
+content_type = "video/mp4"
