@@ -460,6 +460,163 @@ test("a paused HTTP client cannot retain an export slot beyond the shared assemb
   }
 });
 
+test("successful lease renewals through assembly and blocked delivery never extend the total deadline", { timeout: 30_000 }, async () => {
+  const { db, studioEpisodesTable } = await import("@workspace/db");
+  const { default: router } = await import("../src/routes/studio");
+  const handler = router.stack.find(layer => layer.route?.path === "/studio/episodes/:id/video")!.route.stack[0].handle;
+  mock.method(db, "select", (() => ({
+    from(table: unknown) {
+      if (table === studioEpisodesTable) return { where: async () => [{ id: 1, number: 8 }] };
+      const chain = {
+        innerJoin: () => chain, where: () => chain,
+        orderBy: async () => [{ clip: clip(1) }, { clip: clip(2) }],
+      };
+      return chain;
+    },
+  })) as typeof db.select);
+  const before = await episodeDirectories();
+
+  // Advance both clocks together, one heartbeat at a time, flushing the async
+  // store response before the next tick. Media processes and file IO stay real.
+  let elapsed = 0;
+  mock.method(performance, "now", () => elapsed);
+  const activeTimers = new Map<NodeJS.Timeout, {
+    ms: number | undefined; due: number; fire: () => void;
+  }>();
+  // A local scheduler avoids mixing two independent mock trackers for globals.
+  // The production code only needs timeout handles with unref() and cancellation.
+  mock.method(globalThis, "setTimeout", ((callback: (...args: unknown[]) => void, ms?: number, ...args: unknown[]) => {
+    const timer = { unref() { return this; } } as NodeJS.Timeout;
+    activeTimers.set(timer, { ms, due: elapsed + (ms ?? 0), fire: () => callback(...args) });
+    return timer;
+  }) as typeof setTimeout);
+  mock.method(globalThis, "clearTimeout", ((timer: NodeJS.Timeout) => {
+    activeTimers.delete(timer);
+  }) as typeof clearTimeout);
+  const advance = async (ms: number) => {
+    const target = elapsed + ms;
+    while (true) {
+      const next = [...activeTimers.entries()].sort((a, b) => a[1].due - b[1].due)[0];
+      if (!next || next[1].due > target) break;
+      elapsed = next[1].due;
+      activeTimers.delete(next[0]);
+      next[1].fire();
+      // renew() and the heartbeat continuation each have an await boundary.
+      await Promise.resolve();
+      await Promise.resolve();
+    }
+    elapsed = target;
+  };
+
+  let lease: Awaited<ReturnType<typeof acquireEpisodeExportLease>> | undefined;
+  let ownerId: string | undefined;
+  const renewals: number[] = [];
+  let releases = 0;
+  const renewingStore: EpisodeAdmissionStore = {
+    async acquire(owner) {
+      assert.equal(ownerId, undefined);
+      ownerId = owner;
+      return store.acquire(owner);
+    },
+    async renew(owner) {
+      assert.equal(owner, ownerId);
+      assert.equal(owners.has(owner), true);
+      renewals.push(elapsed);
+      return true;
+    },
+    async release(owner) {
+      // Check at the actual storage boundary, not just after the handler exits.
+      assert.deepEqual(await episodeDirectories(), before);
+      assert.equal(owner, ownerId);
+      releases++;
+      await store.release(owner);
+    },
+  };
+  mock.method(episodeExportAdmission, "acquire", async () => {
+    lease = await acquireEpisodeExportLease(renewingStore);
+    return lease;
+  });
+  mock.method(globalThis, "fetch", async () => {
+    for (let heartbeat = 0; heartbeat < 3; heartbeat++) await advance(15_000);
+    lease!.assertOwned();
+    return videoResponse();
+  });
+
+  let markBlocked!: () => void;
+  const blocked = new Promise<void>(resolve => { markBlocked = resolve; });
+  let writes = 0;
+  let deliveryError: Error | null | undefined;
+  const req = Object.assign(new EventEmitter(), {
+    params: { id: "1" }, log: { error() { assert.fail("Unexpected export error"); } },
+  });
+  const res = Object.assign(new Writable({
+    highWaterMark: 1,
+    write() {
+      writes++;
+      // Deliberately never acknowledge the write: delivery must be aborted by
+      // the export deadline, not by a completed response or client disconnect.
+      markBlocked();
+    },
+    destroy(error, done) { deliveryError = error; done(error); },
+  }), {
+    setHeader() {},
+    status() { assert.fail("Cannot send a new status during delivery"); },
+    json() { assert.fail("Cannot send JSON during delivery"); },
+  });
+  const work = handler(req, res, () => {});
+  try {
+    await blocked;
+    assert.equal(elapsed, 90_000);
+    assert.deepEqual(renewals, [15_000, 30_000, 45_000, 60_000, 75_000, 90_000]);
+    assert.equal(writes, 1);
+    assert.equal(releases, 0);
+    assert.equal(owners.size, 1);
+    assert.equal(res.writableFinished, false);
+    const totalDeadlines = () => [...activeTimers.values()]
+      .filter(timer => timer.ms === EPISODE_EXPORT_LIFETIME_MS)
+      .map(({ ms, due }) => ({ ms, due }));
+    assert.deepEqual(totalDeadlines(), [{ ms: EPISODE_EXPORT_LIFETIME_MS, due: EPISODE_EXPORT_LIFETIME_MS }]);
+
+    while (elapsed + 15_000 < EPISODE_EXPORT_LIFETIME_MS) {
+      await advance(15_000);
+      lease!.assertOwned();
+      assert.equal(res.destroyed, false);
+      assert.equal(releases, 0);
+    }
+    await advance(14_999);
+    assert.equal(elapsed, EPISODE_EXPORT_LIFETIME_MS - 1);
+    assert.equal(res.destroyed, false);
+    assert.equal(lease!.signal.aborted, false);
+    assert.equal(renewals.length, 59);
+    assert.deepEqual(totalDeadlines(), [{ ms: EPISODE_EXPORT_LIFETIME_MS, due: EPISODE_EXPORT_LIFETIME_MS }]);
+
+    await advance(1);
+    await work;
+    assert.equal(elapsed, EPISODE_EXPORT_LIFETIME_MS);
+    assert.equal(res.destroyed, true);
+    assert.equal(res.writableFinished, false);
+    assert.equal(deliveryError?.name, "AbortError");
+    assert.equal(writes, 1);
+    assert.equal(lease!.signal.aborted, false, "the total deadline, not lease loss, must stop delivery");
+    assert.equal(releases, 1);
+    assert.equal(owners.size, 0);
+    assert.deepEqual(await episodeDirectories(), before);
+    assert.equal(activeTimers.size, 0, "cleanup must cancel the heartbeat, watchdog, and total deadline");
+
+    const completedRenewals = renewals.length;
+    await advance(2 * EPISODE_EXPORT_LIFETIME_MS);
+    await lease!.release(); // Even a duplicate cleanup cannot release twice.
+    assert.equal(renewals.length, completedRenewals, "no heartbeat may run after cleanup");
+    assert.equal(releases, 1);
+    assert.equal(activeTimers.size, 0);
+    assert.equal(lease!.signal.aborted, false, "no forgotten watchdog may fire after cleanup");
+  } finally {
+    res.destroy();
+    req.emit("aborted");
+    await work;
+  }
+});
+
 test("concurrent HTTP exports reject overflow without downloads or temp files and release on cancellation and failure", async () => {
   process.env.DATABASE_URL ??= "postgresql://test:test@localhost/unused";
   const { db, studioEpisodesTable } = await import("@workspace/db");

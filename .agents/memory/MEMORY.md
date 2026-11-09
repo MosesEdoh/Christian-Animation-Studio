@@ -7,3 +7,4 @@
 - [PostgreSQL idle-client errors](postgres-idle-client-errors.md) — every node-postgres pool needs an error listener so dropped idle sockets do not terminate the process.
 - [Temporary render recovery safety](temporary-render-recovery.md) — favor retaining ambiguous folders over deleting potentially active work.
 - [Workspace hook tests](workspace-hook-tests.md) — real generated hooks can expose duplicate React peers that hook mocks conceal.
+- [Test clock isolation](test-clock-isolation.md) — use one owner for mocked timer globals; overlapping mock trackers can leak fake timers into later tests.
