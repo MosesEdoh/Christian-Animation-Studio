@@ -32,6 +32,7 @@ export * from './faithQuestionInput';
 export * from './faithQuestionInputAgeBand';
 export * from './faithQuestionStory';
 export * from './healthStatus';
+export * from './listStudioExportsParams';
 export * from './preflightStudioExportAspectRatio';
 export * from './preflightStudioExportParams';
 export * from './project';

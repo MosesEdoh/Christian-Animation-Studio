@@ -13,7 +13,7 @@ export default function ClipsScreen() {
   const [selectedClip, setSelectedClip] = useState<number | null>(null);
   const [error, setError] = useState('');
   const query = useGetStudioBootstrap({ query: { queryKey: getGetStudioBootstrapQueryKey() } });
-  const exports = useListStudioExports({ query: { queryKey: getListStudioExportsQueryKey(), refetchInterval: 3000 } });
+  const exports = useListStudioExports(undefined, { query: { queryKey: getListStudioExportsQueryKey(), refetchInterval: 3000 } });
   const create = useCreateStudioExport();
   const button = { backgroundColor: colors.secondary, borderRadius: 12, padding: 13, marginBottom: 8 };
   const readyMovies = (exports.data ?? []).filter(job => job.status === 'ready' && job.url);

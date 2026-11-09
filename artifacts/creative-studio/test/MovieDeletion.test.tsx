@@ -5,6 +5,15 @@ import { MovieExports } from '../src/components/MovieExports';
 import { episode } from './episodeFixtures';
 
 const api = vi.hoisted(() => ({ remove: vi.fn(), jobs: [] as any[] }));
+vi.mock('../src/hooks/useMovieExportHistory', async importOriginal => ({
+  ...await importOriginal<object>(),
+  useMovieExportHistory: () => {
+    const query = useQuery({
+      queryKey: ['/api/studio/exports'], queryFn: async () => api.jobs, staleTime: Infinity,
+    });
+    return { ...query, jobs: query.data ?? [] };
+  },
+}));
 vi.mock('@workspace/api-client-react', async importOriginal => ({
   ...await importOriginal<object>(),
   preflightStudioExport: vi.fn(async () => ({ canQueue: true })),

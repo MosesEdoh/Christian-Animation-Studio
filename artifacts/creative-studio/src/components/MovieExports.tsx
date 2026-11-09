@@ -1,6 +1,7 @@
 import { useRef, useState } from 'react';
-import { getPreflightStudioExportQueryKey, preflightStudioExport, usePreflightStudioExport, useCancelStudioExport, useCreateStudioExport, useDeleteStudioExport, useListStudioExports, getListStudioExportsQueryKey, type Episode, type StudioExport } from '@workspace/api-client-react';
+import { getPreflightStudioExportQueryKey, preflightStudioExport, usePreflightStudioExport, useCancelStudioExport, useCreateStudioExport, useDeleteStudioExport, getListStudioExportsQueryKey, type Episode, type StudioExport } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
+import { updateMovieExportCaches, useMovieExportHistory } from '../hooks/useMovieExportHistory';
 
 type MovieFormat = { aspectRatio: '16:9' | '9:16'; quality: '720p' | '1080p' };
 type MovieBatch = {
@@ -29,7 +30,7 @@ export function MovieExports({ episodes }: { episodes: Episode[] }) {
     queryKey: getPreflightStudioExportQueryKey(estimateParams),
     staleTime: 0, refetchInterval: 30_000, retry: false,
   } });
-  const jobs = useListStudioExports({ query: { queryKey: getListStudioExportsQueryKey(), refetchInterval: 3000 } });
+  const jobs = useMovieExportHistory();
   const create = useCreateStudioExport();
   const cancel = useCancelStudioExport();
   const remove = useDeleteStudioExport();
@@ -42,8 +43,7 @@ export function MovieExports({ episodes }: { episodes: Episode[] }) {
       await remove.mutateAsync({ id: job.id });
       // Stop an older polling response from reintroducing the removed preview.
       await cache.cancelQueries({ queryKey: getListStudioExportsQueryKey() });
-      cache.setQueryData<StudioExport[]>(getListStudioExportsQueryKey(), previous =>
-        previous?.filter(saved => saved.id !== job.id));
+      updateMovieExportCaches(cache, previous => previous.filter(saved => saved.id !== job.id));
       setSelectedId(previous => previous === job.id ? null : previous);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not delete movie. Please try again.');
@@ -58,8 +58,7 @@ export function MovieExports({ episodes }: { episodes: Episode[] }) {
     setCancellingId(id);
     try {
       const cancelled = await cancel.mutateAsync({ id });
-      cache.setQueryData<StudioExport[]>(getListStudioExportsQueryKey(), previous =>
-        previous?.map(job => job.id === id ? cancelled : job));
+      updateMovieExportCaches(cache, previous => previous.map(job => job.id === id ? cancelled : job));
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not cancel movie.');
     } finally {
@@ -67,7 +66,7 @@ export function MovieExports({ episodes }: { episodes: Episode[] }) {
       await cache.invalidateQueries({ queryKey: getListStudioExportsQueryKey() });
     }
   }
-  const ready = (jobs.data ?? []).filter(job => job.status === 'ready' && job.url);
+  const ready = jobs.jobs.filter(job => job.status === 'ready' && job.url);
   const selected = ready.find(job => job.id === selectedId) ?? ready[0];
   async function queue(all: boolean, retry?: { episodeId: number | null; aspectRatio: '16:9' | '9:16'; quality: '720p' | '1080p' }, resume?: MovieBatch) {
     if (queueLock.current) return;
@@ -144,7 +143,8 @@ export function MovieExports({ episodes }: { episodes: Episode[] }) {
       </>}
       <button className="btn btn-quiet" data-testid="dismiss-movie-batch" disabled={queueing} onClick={() => setBatch(null)}>Dismiss batch summary</button>
     </div>}
-    {jobs.isError && <p role="alert">Could not load movie exports. <button onClick={() => jobs.refetch()}>Retry</button></p>}
+    {jobs.isPending && <p role="status">Loading movie exports…</p>}
+    {jobs.isError && !jobs.isFetchNextPageError && <p role="alert">Could not load movie exports. <button onClick={() => jobs.refetch()}>Retry</button></p>}
     {selected?.url && <div style={{ marginTop: 20 }}>
       <label htmlFor="movie-preview-select">Saved movie preview</label>
       <select id="movie-preview-select" value={selected.id} onChange={event => setSelectedId(Number(event.target.value))}>{ready.map(job => <option key={job.id} value={job.id}>#{job.id} · {job.episodeId ? `Episode ${episodes.find(episode => episode.id === job.episodeId)?.number ?? job.episodeId}` : 'Entire series'} · {job.aspectRatio} · {job.quality}</option>)}</select>
@@ -152,12 +152,14 @@ export function MovieExports({ episodes }: { episodes: Episode[] }) {
       <a className="btn btn-primary" href={selected.url} download={`storyboard-${selected.id}-${selected.quality}.mp4`} data-testid="download-movie">Download MP4</a>
     </div>}
     <div style={{ marginTop: 16 }} aria-live="polite">
-      {(jobs.data ?? []).map(job => <p key={job.id} data-testid={`movie-job-${job.id}`}>
+      {jobs.jobs.map(job => <p key={job.id} data-testid={`movie-job-${job.id}`}>
         #{job.id} · {job.episodeId ? `Episode ${episodes.find(episode => episode.id === job.episodeId)?.number ?? job.episodeId}` : 'Entire series'} · {job.aspectRatio} · {job.quality} — {job.status}{job.status === 'rendering' ? ` ${job.progress}%` : ''}
         {(job.status === 'queued' || job.status === 'rendering') && <> · <button disabled={cancellingId !== null} data-testid={`cancel-movie-${job.id}`} onClick={() => cancelJob(job.id)}>{cancellingId === job.id ? 'Cancelling…' : 'Cancel movie'}</button></>}
         {(job.status === 'failed' || job.status === 'cancelled') && <> · {job.status === 'cancelled' ? 'Cancelled. No movie was saved.' : job.error} <button disabled={queueing} onClick={() => queue(false, job)}>Build again</button></>}
         {(['ready', 'failed', 'cancelled'] as const).some(status => status === job.status) && <> · <button disabled={deletingId !== null} data-testid={`delete-movie-${job.id}`} onClick={() => deleteJob(job)}>{deletingId === job.id ? 'Deleting…' : 'Delete movie'}</button></>}
       </p>)}
     </div>
+    {jobs.isFetchNextPageError && <p role="alert">Could not load older movies. Your loaded movies are still available. Try loading more again.</p>}
+    {jobs.hasNextPage && <button className="btn btn-quiet" disabled={jobs.isFetching} onClick={() => jobs.fetchNextPage()} data-testid="load-more-movies">{jobs.isFetchingNextPage ? 'Loading older movies…' : jobs.isFetchNextPageError ? 'Retry loading older movies' : 'Load more movies'}</button>}
   </section>;
 }

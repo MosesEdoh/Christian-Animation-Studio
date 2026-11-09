@@ -34,7 +34,14 @@ beforeEach(() => {
   mock.method(db, "select", () => ({
     from: (table: unknown) => table === usersTable
       ? { where: () => ({ limit: async () => [{ id: "creator" }] }) }
-      : { where: async (predicate: SQL) => rows.filter(row => matches(row, predicate)) },
+      : { where: (predicate?: SQL) => {
+        const query = predicate ? dialect.sqlToQuery(predicate) : undefined;
+        if (!query || query.sql.includes(" < ")) {
+          const page = rows.filter(row => !query || row.id < Number(query.params[0])).sort((a, b) => b.id - a.id);
+          return { orderBy: () => ({ limit: async (limit: number) => page.slice(0, limit) }) };
+        }
+        return Promise.resolve(rows.filter(row => matches(row, predicate!)));
+      } },
   }));
   mock.method(db, "delete", () => ({
     where: async (predicate: SQL) => {
@@ -54,7 +61,7 @@ beforeEach(() => {
 });
 afterEach(() => mock.restoreAll());
 
-async function request(id: string) {
+async function request(id: string, method = "DELETE") {
   const app = express();
   // Exercise the real parent router's protection, not a test-only route guard.
   app.use((req, _res, next) => {
@@ -72,13 +79,39 @@ async function request(id: string) {
   try {
     await new Promise<void>(resolve => server.once("listening", resolve));
     const address = server.address() as { port: number };
-    return await fetch(`http://127.0.0.1:${address.port}/api/studio/exports/${id}`, { method: "DELETE" });
+    return await fetch(`http://127.0.0.1:${address.port}/api/studio/exports${id.startsWith("?") ? id : `/${id}`}`, { method });
   } finally {
     await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     if (saved === undefined) delete process.env.STUDIO_ALLOWED_EMAILS;
     else process.env.STUDIO_ALLOWED_EMAILS = saved;
   }
 }
+
+test("pages beyond one hundred and deletes an older movie without skipping history", async () => {
+  rows = Array.from({ length: 205 }, (_, index) => job(index + 1, "ready", null));
+  const first = await (await request("?limit=100", "GET")).json();
+  assert.equal(first.length, 100);
+  assert.deepEqual(first.map((row: Row) => row.id), Array.from({ length: 100 }, (_, i) => 205 - i));
+  const older = await (await request("?beforeId=106", "GET")).json();
+  assert.equal(older.length, 100);
+  assert.equal(older[0].id, 105);
+  assert.equal(older[99].id, 6);
+  // Delete the page-boundary movie: its cursor must still reach the final five.
+  assert.equal((await request("6")).status, 204);
+  const last = await (await request("?beforeId=6", "GET")).json();
+  assert.deepEqual(last.map((row: Row) => row.id), [5, 4, 3, 2, 1]);
+  assert.equal(rows.length, 204);
+  assert.equal(rows.some(row => row.id === 205), true);
+  assert.equal(rows.some(row => row.id === 6), false);
+  assert.deepEqual(await (await request("?beforeId=1", "GET")).json(), []);
+  assert.equal((await (await request("?limit=2", "GET")).json()).length, 2);
+});
+
+test("rejects invalid page sizes and cursors", async () => {
+  for (const query of ["limit=0", "limit=101", "limit=1.5", "limit=bad", "beforeId=0", "beforeId=-1", "beforeId=1.5", "beforeId=2147483648", "beforeId=bad", "beforeId=1&beforeId=2"]) {
+    assert.equal((await request(`?${query}`, "GET")).status, 400, query);
+  }
+});
 
 test("deletes the object before history, and repeated deletion is a successful no-op", async () => {
   assert.equal((await request("1")).status, 204);

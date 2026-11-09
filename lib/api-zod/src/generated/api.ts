@@ -8,6 +8,21 @@
 import * as zod from 'zod';
 
 
+/**
+ * Movies ordered by descending ID. Request older pages using beforeId set to the last returned ID. A page shorter than limit means the end of history; a full page may be followed by an empty page. ID cursors remain valid after deletion.
+ */
+export const listStudioExportsQueryBeforeIdMax = 2147483647;
+
+export const listStudioExportsQueryLimitDefault = 100;
+export const listStudioExportsQueryLimitMax = 100;
+
+
+
+export const ListStudioExportsQueryParams = zod.object({
+  "beforeId": zod.coerce.number().int().min(1).max(listStudioExportsQueryBeforeIdMax).optional().describe('Return only movies with IDs less than this exclusive cursor.'),
+  "limit": zod.coerce.number().int().min(1).max(listStudioExportsQueryLimitMax).default(listStudioExportsQueryLimitDefault)
+})
+
 export const ListStudioExportsResponseItem = zod.object({
   "id": zod.int(),
   "episodeId": zod.int().nullable(),

@@ -468,6 +468,20 @@ export interface ShotGenerationInput {
   provider?: string | null;
 }
 
+export type ListStudioExportsParams = {
+/**
+ * Return only movies with IDs less than this exclusive cursor.
+ * @minimum 1
+ * @maximum 2147483647
+ */
+beforeId?: number;
+/**
+ * @minimum 1
+ * @maximum 100
+ */
+limit?: number;
+};
+
 export type PreflightStudioExportParams = {
 /**
  * Omit to check the entire series.

@@ -16,6 +16,13 @@ const api = vi.hoisted(() => ({
   estimateError: false,
 }));
 
+vi.mock('../src/hooks/useMovieExportHistory', async importOriginal => ({
+  ...await importOriginal<object>(),
+  useMovieExportHistory: () => ({
+    jobs: api.jobs, isError: api.listError, refetch: api.refetch,
+  }),
+}));
+
 vi.mock('@workspace/api-client-react', async () => {
   const { useMutation } = await import('@tanstack/react-query');
   return {

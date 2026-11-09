@@ -38,6 +38,7 @@ import type {
   FaithQuestionInput,
   FaithQuestionStory,
   HealthStatus,
+  ListStudioExportsParams,
   PreflightStudioExportParams,
   Project,
   ProjectUpdate,
@@ -87,17 +88,27 @@ const withQueryKey = <T extends object, K>(query: T, queryKey: K): T & { queryKe
   return result;
 };
 
-export const getListStudioExportsUrl = () => {
+export const getListStudioExportsUrl = (params?: ListStudioExportsParams,) => {
+  const normalizedParams = new URLSearchParams();
 
+  Object.entries(params || {}).forEach(([key, value]) => {
 
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
 
+  const stringifiedParams = normalizedParams.toString();
 
-  return `/api/studio/exports`
+  return stringifiedParams.length > 0 ? `/api/studio/exports?${stringifiedParams}` : `/api/studio/exports`
 }
 
-export const listStudioExports = async ( options?: Parameters<typeof customFetch>[1]): Promise<StudioExport[]> => {
+/**
+ * Movies ordered by descending ID. Request older pages using beforeId set to the last returned ID. A page shorter than limit means the end of history; a full page may be followed by an empty page. ID cursors remain valid after deletion.
+ */
+export const listStudioExports = async (params?: ListStudioExportsParams, options?: Parameters<typeof customFetch>[1]): Promise<StudioExport[]> => {
 
-  return customFetch<StudioExport[]>(getListStudioExportsUrl(),
+  return customFetch<StudioExport[]>(getListStudioExportsUrl(params),
   {
     ...options,
     method: 'GET'
@@ -110,23 +121,23 @@ export const listStudioExports = async ( options?: Parameters<typeof customFetch
 
 
 
-export const getListStudioExportsQueryKey = () => {
+export const getListStudioExportsQueryKey = (params?: ListStudioExportsParams,) => {
     return [
-    `/api/studio/exports`
+    `/api/studio/exports`, ...(params ? [params] : [])
     ] as const;
     }
 
 
-export const getListStudioExportsQueryOptions = <TData = Awaited<ReturnType<typeof listStudioExports>>, TError = ErrorType<unknown>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listStudioExports>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export const getListStudioExportsQueryOptions = <TData = Awaited<ReturnType<typeof listStudioExports>>, TError = ErrorType<void>>(params?: ListStudioExportsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listStudioExports>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 ) => {
 
 const {query: queryOptions, request: requestOptions} = options ?? {};
 
-  const queryKey =  queryOptions?.queryKey ?? getListStudioExportsQueryKey();
+  const queryKey =  queryOptions?.queryKey ?? getListStudioExportsQueryKey(params);
 
 
 
-    const queryFn: QueryFunction<Awaited<ReturnType<typeof listStudioExports>>> = ({ signal }) => listStudioExports({ signal, ...requestOptions });
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listStudioExports>>> = ({ signal }) => listStudioExports(params, { signal, ...requestOptions });
 
 
 
@@ -136,16 +147,16 @@ const {query: queryOptions, request: requestOptions} = options ?? {};
 }
 
 export type ListStudioExportsQueryResult = NonNullable<Awaited<ReturnType<typeof listStudioExports>>>
-export type ListStudioExportsQueryError = ErrorType<unknown>
+export type ListStudioExportsQueryError = ErrorType<void>
 
 
 
-export function useListStudioExports<TData = Awaited<ReturnType<typeof listStudioExports>>, TError = ErrorType<unknown>>(
-  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listStudioExports>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+export function useListStudioExports<TData = Awaited<ReturnType<typeof listStudioExports>>, TError = ErrorType<void>>(
+ params?: ListStudioExportsParams, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listStudioExports>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
 
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
-  const queryOptions = getListStudioExportsQueryOptions(options)
+  const queryOptions = getListStudioExportsQueryOptions(params,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 

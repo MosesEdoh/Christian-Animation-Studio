@@ -7,6 +7,10 @@ import { episode } from './episodeFixtures';
 const api = vi.hoisted(() => ({
   cancel: vi.fn(), create: vi.fn(), jobs: [] as any[],
 }));
+vi.mock('../src/hooks/useMovieExportHistory', async importOriginal => ({
+  ...await importOriginal<object>(),
+  useMovieExportHistory: () => ({ jobs: api.jobs, isError: false }),
+}));
 vi.mock('@workspace/api-client-react', async importOriginal => ({
   ...await importOriginal<object>(),
   preflightStudioExport: vi.fn(async () => ({ canQueue: true })),

@@ -1,7 +1,7 @@
 import { Router } from "express";
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, lt } from "drizzle-orm";
 import { db, studioExportsTable, studioEpisodesTable } from "@workspace/db";
-import { CreateStudioExportBody, CreateStudioExportResponse, ListStudioExportsResponse, DownloadStudioExportParams, CancelStudioExportParams, CancelStudioExportResponse, DeleteStudioExportParams } from "@workspace/api-zod";
+import { CreateStudioExportBody, CreateStudioExportResponse, ListStudioExportsQueryParams, ListStudioExportsResponse, DownloadStudioExportParams, CancelStudioExportParams, CancelStudioExportResponse, DeleteStudioExportParams } from "@workspace/api-zod";
 import { cancelMovieExport, exportView, wakeMovieWorker } from "../lib/movieRenderer";
 import { ObjectNotFoundError, ObjectStorageService } from "../lib/objectStorage";
 import { streamPrivateMedia } from "../lib/privateMedia";
@@ -21,8 +21,12 @@ router.get("/studio/exports/preflight", async (req, res): Promise<void> => {
     res.status(503).json({ error: "Could not check movie limits. Please try again before queueing." });
   }
 });
-router.get("/studio/exports", async (_req, res): Promise<void> => {
-  const rows = await db.select().from(studioExportsTable).orderBy(desc(studioExportsTable.id)).limit(100);
+router.get("/studio/exports", async (req, res): Promise<void> => {
+  const parsed = ListStudioExportsQueryParams.safeParse(req.query);
+  if (!parsed.success) { res.status(400).json({ error: "Choose a valid movie cursor and page size (1–100)." }); return; }
+  const rows = await db.select().from(studioExportsTable)
+    .where(parsed.data.beforeId === undefined ? undefined : lt(studioExportsTable.id, parsed.data.beforeId))
+    .orderBy(desc(studioExportsTable.id)).limit(parsed.data.limit ?? 100);
   res.json(ListStudioExportsResponse.parse(rows.map(exportView)));
 });
 router.post("/studio/exports", async (req, res): Promise<void> => {

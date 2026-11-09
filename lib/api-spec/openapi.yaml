@@ -23,6 +23,15 @@ paths:
     get:
       operationId: listStudioExports
       tags: [studio]
+      description: Movies ordered by descending ID. Request older pages using beforeId set to the last returned ID. A page shorter than limit means the end of history; a full page may be followed by an empty page. ID cursors remain valid after deletion.
+      parameters:
+        - in: query
+          name: beforeId
+          description: Return only movies with IDs less than this exclusive cursor.
+          schema: { type: integer, minimum: 1, maximum: 2147483647 }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
       responses:
         "200":
           description: Saved storyboard movie exports
@@ -31,6 +40,8 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/StudioExport" }
+        "400":
+          description: Invalid page size or cursor
     post:
       operationId: createStudioExport
       tags: [studio]
