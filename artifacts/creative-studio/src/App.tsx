@@ -88,6 +88,9 @@ function assetSrc(objectPath: string): string {
 
 async function downloadSeriesPackage(bootstrap: StudioBootstrap): Promise<void> {
   const files: Record<string, Uint8Array> = {};
+  const episodeVideoReports: string[] = [];
+  let packagedEpisodeVideoBytes = 0;
+  const maxPackagedEpisodeVideoBytes = 250 * 1024 * 1024;
   const safeName = (value: string) =>
     value.replace(/[<>:"/\\|?*\x00-\x1f]/g, '-').trim() || 'untitled';
   const projectName = safeName(bootstrap.project.title);
@@ -126,6 +129,92 @@ async function downloadSeriesPackage(bootstrap: StudioBootstrap): Promise<void> 
       null,
       2,
     ));
+    const videoPath = `${folder}/episode.mp4`;
+    const videoReportPath = `${folder}/episode-video-report.txt`;
+    let videoStatus = 'unavailable';
+    let includedVideoPath: string | null = null;
+    let usedClipIds: number[] = [];
+    let skippedClips: Array<{ clipId: number; provider: string; reason: string }> = [];
+    let videoMessage = 'No downloadable clips are available for this episode.';
+    try {
+      const response = await fetch(`/api/studio/episodes/${episode.id}/video`, {
+        credentials: 'include',
+      });
+      if (response.ok) {
+        const blob = await response.blob();
+        const encodedReport = response.headers.get('x-episode-video-report');
+        if (encodedReport) {
+          try {
+            const reportBytes = Uint8Array.from(atob(encodedReport), (character) => character.charCodeAt(0));
+            const report = JSON.parse(new TextDecoder().decode(reportBytes)) as {
+              usedClipIds?: number[];
+              skippedClips?: Array<{ clipId: number; provider: string; reason: string }>;
+            };
+            usedClipIds = report.usedClipIds ?? [];
+            skippedClips = report.skippedClips ?? [];
+          } catch {
+            skippedClips.push({
+              clipId: 0,
+              provider: 'export',
+              reason: 'The MP4 was created, but its clip report could not be read.',
+            });
+          }
+        }
+        if (!blob.size) {
+          videoMessage = 'The episode export returned an empty video.';
+        } else if (packagedEpisodeVideoBytes + blob.size > maxPackagedEpisodeVideoBytes) {
+          videoStatus = 'not-included-size-limit';
+          videoMessage = 'The series ZIP video-size limit was reached; this episode MP4 was not added.';
+        } else {
+          files[videoPath] = new Uint8Array(await blob.arrayBuffer());
+          packagedEpisodeVideoBytes += blob.size;
+          includedVideoPath = videoPath;
+          videoStatus = skippedClips.length ? 'partial' : 'ready';
+          videoMessage = skippedClips.length
+            ? 'MP4 included with one or more unavailable clips skipped.'
+            : 'MP4 assembled from all available clips.';
+        }
+      } else {
+        const failure = await response.json().catch(() => ({})) as {
+          error?: string;
+          skippedClips?: Array<{ clipId: number; provider: string; reason: string }>;
+        };
+        videoMessage = failure.error ?? `Episode video export failed (${response.status}).`;
+        skippedClips = failure.skippedClips ?? [];
+      }
+    } catch {
+      videoMessage = 'The episode video service could not be reached; no MP4 was included.';
+    }
+    if (!skippedClips.length && episodeClips.length) {
+      skippedClips = episodeClips
+        .filter((clip) => !usedClipIds.includes(clip.id))
+        .map((clip) => ({
+          clipId: clip.id,
+          provider: clip.provider,
+          reason: clip.status !== 'ready'
+            ? `Clip is ${clip.status}, not ready for export.`
+            : clip.url
+              ? 'The provider-hosted clip could not be downloaded for episode assembly.'
+              : 'The provider did not provide a downloadable video URL.',
+        }));
+    }
+    const clipDetails = skippedClips.map((clip) =>
+      `- Clip ${clip.clipId}${clip.provider === 'export' ? '' : ` (${clip.provider})`}: ${clip.reason}`,
+    );
+    files[videoReportPath] = strToU8([
+      `Episode ${episode.number}: ${episode.title}`,
+      `Status: ${videoStatus}`,
+      videoMessage,
+      includedVideoPath ? `Video: ${includedVideoPath}` : 'Video: not included',
+      usedClipIds.length ? `Clips assembled: ${usedClipIds.map((id) => `#${id}`).join(', ')}` : 'Clips assembled: none',
+      skippedClips.length ? 'Clips unavailable or skipped:' : '',
+      ...clipDetails,
+      '',
+      'Provider-hosted links, when present, are listed in clip-links.txt and the series manifest.',
+    ].filter(Boolean).join('\n'));
+    episodeVideoReports.push(
+      `Episode ${episode.number} — ${episode.title}: ${videoStatus}${includedVideoPath ? ` (${includedVideoPath})` : ''}`,
+    );
     episodes.push({
       number: episode.number,
       title: episode.title,
@@ -135,6 +224,11 @@ async function downloadSeriesPackage(bootstrap: StudioBootstrap): Promise<void> 
       duration: episode.duration,
       script: `${folder}/script.txt`,
       shotList: `${folder}/shot-list.json`,
+      video: includedVideoPath,
+      videoStatus,
+      videoReport: videoReportPath,
+      usedClipIds,
+      unavailableVideoClips: skippedClips,
     });
   }
 
@@ -151,7 +245,8 @@ async function downloadSeriesPackage(bootstrap: StudioBootstrap): Promise<void> 
   files['README.txt'] = strToU8([
     `${bootstrap.project.title} — series production package`,
     '',
-    'Included: all episode scripts, shot lists, character bible, uploaded reference images, and clips that the provider makes downloadable.',
+    'Included: episode scripts, shot lists, character bible, uploaded references, downloadable provider clips, and assembled episode MP4s when clips are available.',
+    'Each episode has an episode-video-report.txt that lists clips used and clips skipped or unavailable.',
     'Provider-hosted clips that cannot be fetched by the browser are listed in clip-links.txt and series-manifest.json.',
     'A mock provider records jobs but does not create video files.',
   ].join('\n'));
@@ -195,6 +290,9 @@ async function downloadSeriesPackage(bootstrap: StudioBootstrap): Promise<void> 
     }
   }
   if (clipLinks.length) files['clip-links.txt'] = strToU8(clipLinks.join('\n'));
+  if (episodeVideoReports.length) {
+    files['episode-video-reports.txt'] = strToU8(episodeVideoReports.join('\n'));
+  }
 
   const archive = zipSync(files, { level: 6 });
   const url = URL.createObjectURL(new Blob([archive], { type: 'application/zip' }));
@@ -1189,7 +1287,7 @@ function DashboardView({
             <PenLine size={14} /> Edit project card
           </button>
           <span className="row-caption" style={{ flexBasis: '100%', textAlign: 'right' }}>
-            ZIP includes scripts, references, shot lists, and downloadable provider clips when available.
+            ZIP includes assembled episode MP4s when clips are downloadable, plus a report for skipped or unavailable clips.
           </span>
         </div>
       </div>

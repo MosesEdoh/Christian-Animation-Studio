@@ -1,4 +1,5 @@
 import { Router, type IRouter } from "express";
+import { createReadStream } from "node:fs";
 import { asc, count, eq } from "drizzle-orm";
 import {
   CheckSceneContentBody,
@@ -52,6 +53,7 @@ import {
 import { generateGeminiJson, generateGeminiText } from "../lib/ai";
 import { submitVideoGeneration } from "../lib/video-provider";
 import { ObjectStorageService } from "../lib/objectStorage";
+import { assembleEpisodeVideo, removeEpisodeVideo } from "../lib/episodeVideo";
 
 const router: IRouter = Router();
 
@@ -857,6 +859,65 @@ router.post("/studio/ai/shot-suggestions", async (req, res): Promise<void> => {
   } catch (error) {
     req.log.error({ err: error }, "Shot suggestion generation failed");
     res.status(502).json({ error: "Gemini could not suggest shots" });
+  }
+});
+
+router.get("/studio/episodes/:id/video", async (req, res): Promise<void> => {
+  const episodeId = Number(req.params.id);
+  if (!Number.isSafeInteger(episodeId) || episodeId <= 0) {
+    res.status(400).json({ error: "Invalid episode ID" });
+    return;
+  }
+  const [episode] = await db
+    .select()
+    .from(studioEpisodesTable)
+    .where(eq(studioEpisodesTable.id, episodeId));
+  if (!episode) {
+    res.status(404).json({ error: "Episode not found" });
+    return;
+  }
+  const clips = await db
+    .select({ clip: studioClipsTable })
+    .from(studioClipsTable)
+    .innerJoin(studioShotsTable, eq(studioClipsTable.shotId, studioShotsTable.id))
+    .innerJoin(studioScenesTable, eq(studioShotsTable.sceneId, studioScenesTable.id))
+    .where(eq(studioScenesTable.episodeId, episodeId))
+    .orderBy(asc(studioScenesTable.number), asc(studioShotsTable.number), asc(studioClipsTable.createdAt));
+  try {
+    const assembled = await assembleEpisodeVideo(clips.map(({ clip }) => clip));
+    res.setHeader("Content-Type", "video/mp4");
+    res.setHeader("Content-Disposition", `attachment; filename="episode-${episode.number}.mp4"`);
+    res.setHeader("Cache-Control", "private, no-store");
+    res.setHeader("X-Content-Type-Options", "nosniff");
+    res.setHeader("X-Episode-Video-Report", Buffer.from(JSON.stringify(assembled.report)).toString("base64"));
+    const stream = createReadStream(assembled.outputPath);
+    stream.on("error", error => {
+      req.log.error({ err: error, episodeId }, "Episode video download failed");
+      if (!res.headersSent) res.status(500).json({ error: "The episode video could not be downloaded." });
+      else res.destroy(error);
+    });
+    stream.on("close", () => { void removeEpisodeVideo(assembled.directory); });
+    stream.pipe(res);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Episode video assembly failed.";
+    if (message.startsWith("No downloadable")) {
+      res.status(422).json({
+        error: message,
+        usedClipIds: [],
+        skippedClips: clips.map(({ clip }) => ({
+          clipId: clip.id,
+          provider: clip.provider,
+          reason: clip.status !== "ready"
+            ? `Clip is ${clip.status}, not ready for export.`
+            : clip.url
+              ? "The provider-hosted clip could not be downloaded or decoded for episode assembly."
+              : "The provider did not provide a downloadable video URL.",
+        })),
+      });
+      return;
+    }
+    req.log.error({ err: error, episodeId }, "Episode video assembly failed");
+    res.status(502).json({ error: "The episode clips could not be assembled into an MP4." });
   }
 });
 

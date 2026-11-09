@@ -82,6 +82,27 @@ paths:
           content:
             video/mp4:
               schema: { type: string, format: binary }
+  /studio/episodes/{id}/video:
+    get:
+      operationId: downloadStudioEpisodeVideo
+      tags: [studio]
+      summary: Assemble downloadable provider clips into one episode MP4
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Assembled episode MP4; skipped clip details are base64 JSON in X-Episode-Video-Report
+          headers:
+            X-Episode-Video-Report:
+              schema: { type: string }
+          content:
+            video/mp4:
+              schema: { type: string, format: binary }
+        "422":
+          description: No usable clips are available
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/EpisodeVideoUnavailable" }
   /healthz:
     get:
       operationId: healthCheck
@@ -722,6 +743,24 @@ components:
           type: array
           items: { $ref: "#/components/schemas/Shot" }
       required: [episodeId, scenes, shots]
+    EpisodeVideoIssue:
+      type: object
+      properties:
+        clipId: { type: integer }
+        provider: { type: string }
+        reason: { type: string }
+      required: [clipId, provider, reason]
+    EpisodeVideoUnavailable:
+      type: object
+      properties:
+        error: { type: string }
+        usedClipIds:
+          type: array
+          items: { type: integer }
+        skippedClips:
+          type: array
+          items: { $ref: "#/components/schemas/EpisodeVideoIssue" }
+      required: [error, usedClipIds, skippedClips]
     Clip:
       type: object
       properties:

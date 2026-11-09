@@ -312,6 +312,18 @@ export interface EpisodeCompletionResponse {
   shots: Shot[];
 }
 
+export interface EpisodeVideoIssue {
+  clipId: number;
+  provider: string;
+  reason: string;
+}
+
+export interface EpisodeVideoUnavailable {
+  error: string;
+  usedClipIds: number[];
+  skippedClips: EpisodeVideoIssue[];
+}
+
 export type ClipStatus = typeof ClipStatus[keyof typeof ClipStatus];
 
 

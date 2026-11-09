@@ -25,6 +25,8 @@ export * from './episodeCompletionInput';
 export * from './episodeCompletionInputAgeBand';
 export * from './episodeCompletionResponse';
 export * from './episodeStatus';
+export * from './episodeVideoIssue';
+export * from './episodeVideoUnavailable';
 export * from './errorEnvelope';
 export * from './faithQuestionInput';
 export * from './faithQuestionInputAgeBand';

@@ -77,6 +77,16 @@ export const DownloadStudioExportResponse = zod.unknown()
 
 
 /**
+ * @summary Assemble downloadable provider clips into one episode MP4
+ */
+export const DownloadStudioEpisodeVideoParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const DownloadStudioEpisodeVideoResponse = zod.unknown()
+
+
+/**
  * Returns server health status
  * @summary Health check
  */

@@ -34,6 +34,7 @@ import type {
   ContentCheckResult,
   EpisodeCompletionInput,
   EpisodeCompletionResponse,
+  EpisodeVideoUnavailable,
   ErrorEnvelope,
   FaithQuestionInput,
   FaithQuestionStory,
@@ -451,6 +452,83 @@ export function useDownloadStudioExport<TData = Awaited<ReturnType<typeof downlo
  ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
 
   const queryOptions = getDownloadStudioExportQueryOptions(id,options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getDownloadStudioEpisodeVideoUrl = (id: number,) => {
+
+
+
+
+  return `/api/studio/episodes/${id}/video`
+}
+
+/**
+ * @summary Assemble downloadable provider clips into one episode MP4
+ */
+export const downloadStudioEpisodeVideo = async (id: number, options?: Parameters<typeof customFetch>[1]): Promise<Blob> => {
+
+  return customFetch<Blob>(getDownloadStudioEpisodeVideoUrl(id),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getDownloadStudioEpisodeVideoQueryKey = (id: number,) => {
+    return [
+    `/api/studio/episodes/${id}/video`
+    ] as const;
+    }
+
+
+export const getDownloadStudioEpisodeVideoQueryOptions = <TData = Awaited<ReturnType<typeof downloadStudioEpisodeVideo>>, TError = ErrorType<EpisodeVideoUnavailable>>(id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof downloadStudioEpisodeVideo>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getDownloadStudioEpisodeVideoQueryKey(id);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof downloadStudioEpisodeVideo>>> = ({ signal }) => downloadStudioEpisodeVideo(id, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: id !== null && id !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof downloadStudioEpisodeVideo>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type DownloadStudioEpisodeVideoQueryResult = NonNullable<Awaited<ReturnType<typeof downloadStudioEpisodeVideo>>>
+export type DownloadStudioEpisodeVideoQueryError = ErrorType<EpisodeVideoUnavailable>
+
+
+/**
+ * @summary Assemble downloadable provider clips into one episode MP4
+ */
+
+export function useDownloadStudioEpisodeVideo<TData = Awaited<ReturnType<typeof downloadStudioEpisodeVideo>>, TError = ErrorType<EpisodeVideoUnavailable>>(
+ id: number, options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof downloadStudioEpisodeVideo>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getDownloadStudioEpisodeVideoQueryOptions(id,options)
 
   const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
 
