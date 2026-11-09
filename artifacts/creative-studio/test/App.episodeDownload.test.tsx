@@ -1,8 +1,9 @@
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Clip, StudioBootstrap } from '@workspace/api-client-react';
 import App from '../src/App';
 import { downloadEpisodeVideo } from '../src/lib/episodeDownload';
+import { downloadSeriesPackage } from '../src/lib/seriesPackage';
 import { bootstrap, clip, episode, otherEpisode, shot } from './episodeFixtures';
 
 const state = vi.hoisted(() => ({ data: undefined as StudioBootstrap | undefined }));
@@ -22,6 +23,20 @@ vi.mock('@workspace/api-client-react', async importOriginal => {
 });
 vi.mock('../src/components/MovieExports', () => ({ MovieExports: () => null }));
 vi.mock('../src/lib/episodeDownload', () => ({ downloadEpisodeVideo: vi.fn() }));
+vi.mock('../src/lib/seriesPackage', async importOriginal => ({
+  ...await importOriginal<typeof import('../src/lib/seriesPackage')>(),
+  downloadSeriesPackage: vi.fn(),
+}));
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
+  return { promise, resolve, reject };
+}
+
+const seriesControl = () => screen.getByTestId('button-export-series');
+const seriesSuccess = 'Series package downloaded.';
 
 const control = (id: number) => within(screen.getByTestId(`row-episode-${id}`))
   .getByRole('button', { name: /Download episode .* MP4/ });
@@ -36,6 +51,136 @@ const unavailable: Array<[string, Partial<Clip>]> = [
 beforeEach(() => {
   state.data = structuredClone(bootstrap);
   vi.mocked(downloadEpisodeVideo).mockReset();
+  vi.mocked(downloadSeriesPackage).mockReset();
+});
+
+describe('signed-in dashboard series ZIP wiring', () => {
+  it('packs the current bootstrap, blocks duplicate clicks, and reports success only after completion', async () => {
+    const packing = deferred<void>();
+    vi.mocked(downloadSeriesPackage).mockReturnValue(packing.promise);
+    const { rerender } = render(<App />);
+    expect(screen.getByTestId('view-dashboard')).toBeVisible();
+    expect(seriesControl()).toBeEnabled();
+    expect(seriesControl()).toHaveAccessibleName('Download series ZIP');
+
+    // Export must use refreshed data, not the bootstrap from the initial render.
+    const refreshed = {
+      ...structuredClone(bootstrap),
+      project: { ...bootstrap.project, title: 'Refreshed series' },
+      episodes: [{ ...episode, title: 'Refreshed episode' }],
+    };
+    state.data = refreshed;
+    rerender(<App />);
+    fireEvent.click(seriesControl());
+
+    expect(downloadSeriesPackage).toHaveBeenCalledExactlyOnceWith(refreshed);
+    expect(vi.mocked(downloadSeriesPackage).mock.calls[0][0]).toBe(refreshed);
+    expect(seriesControl()).toBeDisabled();
+    expect(seriesControl()).toHaveAccessibleName('Packing…');
+    expect(screen.queryByText(seriesSuccess)).not.toBeInTheDocument();
+    expect(downloadEpisodeVideo).not.toHaveBeenCalled();
+    fireEvent.click(seriesControl());
+    expect(downloadSeriesPackage).toHaveBeenCalledTimes(1);
+
+    await act(async () => packing.resolve());
+    expect(screen.getByTestId('status-toast')).toHaveTextContent(seriesSuccess);
+    expect(screen.getByText(seriesSuccess).closest('.toast')).not.toHaveClass('error');
+    expect(seriesControl()).toBeEnabled();
+    expect(seriesControl()).toHaveAccessibleName('Download series ZIP');
+    expect(downloadEpisodeVideo).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [new Error('Sign in again to export private references.'), 'Sign in again to export private references.'],
+    ['unexpected rejection', 'The series package could not be created.'],
+  ])('shows an explicit error and allows retry after rejection: %s', async (failure, message) => {
+    const failed = deferred<void>();
+    const retry = deferred<void>();
+    vi.mocked(downloadSeriesPackage)
+      .mockReturnValueOnce(failed.promise)
+      .mockReturnValueOnce(retry.promise);
+    render(<App />);
+    fireEvent.click(seriesControl());
+    expect(seriesControl()).toBeDisabled();
+    expect(screen.queryByText(seriesSuccess)).not.toBeInTheDocument();
+
+    await act(async () => failed.reject(failure));
+    expect(screen.getByTestId('status-toast')).toHaveTextContent(message);
+    expect(screen.getByText(message).closest('.toast')).toHaveClass('error');
+    expect(screen.queryByText(seriesSuccess)).not.toBeInTheDocument();
+    expect(seriesControl()).toBeEnabled();
+    expect(seriesControl()).toHaveAccessibleName('Download series ZIP');
+
+    fireEvent.click(seriesControl());
+    expect(downloadSeriesPackage).toHaveBeenCalledTimes(2);
+    expect(downloadSeriesPackage).toHaveBeenNthCalledWith(2, state.data);
+    expect(seriesControl()).toBeDisabled();
+    expect(seriesControl()).toHaveAccessibleName('Packing…');
+    expect(screen.queryByText(seriesSuccess)).not.toBeInTheDocument();
+
+    await act(async () => retry.resolve());
+    expect(screen.getByTestId('status-toast')).toHaveTextContent(seriesSuccess);
+    expect(screen.queryByText(message)).not.toBeInTheDocument();
+    expect(screen.getByText(seriesSuccess).closest('.toast')).not.toHaveClass('error');
+    expect(seriesControl()).toBeEnabled();
+    expect(seriesControl()).toHaveAccessibleName('Download series ZIP');
+    expect(downloadEpisodeVideo).not.toHaveBeenCalled();
+  });
+
+  it.each(['ZIP', 'MP4'])('keeps overlapping ZIP and episode exports independent when %s finishes first', async first => {
+    const packing = deferred<void>();
+    const assembling = deferred<Awaited<ReturnType<typeof downloadEpisodeVideo>>>();
+    const mp4Result = { message: 'Episode MP4 downloaded independently.', skippedClips: [] };
+    vi.mocked(downloadSeriesPackage).mockReturnValue(packing.promise);
+    vi.mocked(downloadEpisodeVideo).mockReturnValue(assembling.promise);
+    render(<App />);
+
+    // Exercise both initiation orders as well as both completion orders.
+    if (first === 'ZIP') {
+      fireEvent.click(seriesControl());
+      expect(downloadEpisodeVideo).not.toHaveBeenCalled();
+      expect(control(episode.id)).toBeEnabled();
+      fireEvent.click(control(episode.id));
+    } else {
+      fireEvent.click(control(episode.id));
+      expect(downloadSeriesPackage).not.toHaveBeenCalled();
+      expect(seriesControl()).toBeEnabled();
+      fireEvent.click(seriesControl());
+    }
+    expect(downloadSeriesPackage).toHaveBeenCalledExactlyOnceWith(state.data);
+    expect(downloadEpisodeVideo).toHaveBeenCalledExactlyOnceWith(episode, expect.any(AbortSignal));
+    expect(seriesControl()).toBeDisabled();
+    expect(seriesControl()).toHaveAccessibleName('Packing…');
+    expect(control(episode.id)).toBeDisabled();
+    expect(control(episode.id)).toHaveTextContent('Assembling MP4…');
+
+    const episodeStatus = screen.getByTestId(`status-episode-download-${episode.id}`);
+    if (first === 'ZIP') {
+      await act(async () => packing.resolve());
+      expect(seriesControl()).toBeEnabled();
+      expect(screen.getByTestId('status-toast')).toHaveTextContent(seriesSuccess);
+      expect(control(episode.id)).toBeDisabled();
+      expect(episodeStatus).toHaveTextContent('Assembling available clips');
+      expect(episodeStatus).not.toHaveTextContent(seriesSuccess);
+      await act(async () => assembling.resolve(mp4Result));
+    } else {
+      await act(async () => assembling.resolve(mp4Result));
+      expect(control(episode.id)).toBeEnabled();
+      expect(episodeStatus).toHaveTextContent(mp4Result.message);
+      expect(seriesControl()).toBeDisabled();
+      expect(seriesControl()).toHaveAccessibleName('Packing…');
+      expect(screen.queryByText(seriesSuccess)).not.toBeInTheDocument();
+      await act(async () => packing.resolve());
+    }
+    expect(seriesControl()).toBeEnabled();
+    expect(seriesControl()).toHaveAccessibleName('Download series ZIP');
+    expect(control(episode.id)).toBeEnabled();
+    expect(episodeStatus).toHaveTextContent(mp4Result.message);
+    expect(episodeStatus).not.toHaveTextContent(seriesSuccess);
+    expect(screen.getByTestId('status-toast')).toHaveTextContent(seriesSuccess);
+    expect(downloadSeriesPackage).toHaveBeenCalledTimes(1);
+    expect(downloadEpisodeVideo).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe('signed-in dashboard episode download wiring', () => {
