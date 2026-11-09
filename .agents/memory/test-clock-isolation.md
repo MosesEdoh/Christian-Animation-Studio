@@ -14,3 +14,9 @@ For process-crash recovery regressions, keep clock and timer interception inside
 **Why:** Advancing recovery time against the normal operating-system temporary directory could reclaim unrelated abandoned renders. Child isolation also prevents controlled timers from leaking into the parent test runner.
 
 **How to apply:** Never exercise application startup recovery with a simulated future clock unless its default temporary storage root has already been isolated. Replace unrelated external services rather than introducing production-only test switches.
+
+Capture native transports before tests install layered method mocks when a later integration case needs real HTTP.
+
+**Why:** Repeated method mocks on the same global can leave an earlier stub as the restored implementation. A network regression then passes in isolation but silently receives provider fixtures instead of opening a socket in the full suite.
+
+**How to apply:** Keep the original transport outside per-test hooks, delegate only local HTTP requests to it, and assert actual server-side request arrival. Do not assume a per-test snapshot of a global is the native implementation.

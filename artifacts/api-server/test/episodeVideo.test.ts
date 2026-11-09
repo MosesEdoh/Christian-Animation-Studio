@@ -8,6 +8,7 @@ import { EventEmitter } from "node:events";
 import { createServer, get, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { createRequire } from "node:module";
 import { Writable } from "node:stream";
 import { episodeExportAdmission, acquireEpisodeExportLease, type EpisodeAdmissionStore } from "../src/lib/episodeExportAdmission";
 import {
@@ -19,6 +20,8 @@ import {
 
 let fixtures: string;
 const media: Buffer[] = [];
+// Capture before earlier tests layer provider mocks onto the global transport.
+const nativeHttpFetch = globalThis.fetch;
 const clip = (id: number, overrides: Partial<EpisodeVideoClip> = {}): EpisodeVideoClip => ({
   id, provider: "test-provider", status: "ready", url: `https://media.example/${id}.mp4`, ...overrides,
 });
@@ -458,6 +461,183 @@ test("a paused HTTP client cannot retain an export slot beyond the shared assemb
     server.closeAllConnections();
     await new Promise<void>(resolve => server.close(() => resolve()));
   }
+});
+
+test("cancelling a real series ZIP during HTTP delivery frees capacity before a fresh series succeeds", { timeout: 30_000 }, async (t) => {
+  const { downloadSeriesPackage } = await import("../../creative-studio/src/lib/seriesPackage");
+  const { NodeZipWorker } = await import("../../creative-studio/test/nodeZipWorker");
+  const { unzipSync } = createRequire(new URL("../../creative-studio/package.json", import.meta.url))("fflate");
+  const { db, studioEpisodesTable } = await import("@workspace/db");
+  const { default: router } = await import("../src/routes/studio");
+  const handler = router.stack.find(layer => layer.route?.path === "/studio/episodes/:id/video")!.route.stack[0].handle;
+  mock.method(db, "select", (() => ({
+    from(table: unknown) {
+      if (table === studioEpisodesTable) return { where: async () => [{ id: 1, number: 1 }] };
+      const chain = {
+        innerJoin: () => chain, where: () => chain,
+        orderBy: async () => [{ clip: clip(1) }],
+      };
+      return chain;
+    },
+  })) as typeof db.select);
+  const bootstrap: Parameters<typeof downloadSeriesPackage>[0] = {
+    project: { id: 1, title: "Streaming series", logline: "", audience: "5–17", seasonLabel: "Season 1", activeEpisodeId: 1 },
+    episodes: [1, 2].map(id => ({
+      id, projectId: 1, number: id, title: `Episode ${id}`, summary: "A story",
+      status: "draft", progress: 0, duration: "1 min",
+    })),
+    scenes: [], shots: [], clips: [], assets: [], characters: [],
+  };
+  const before = await episodeDirectories();
+  let pauseDelivery = true;
+  const releases: string[] = [];
+  const release = store.release;
+  mock.method(store, "release", async (owner: string) => {
+    if (pauseDelivery) {
+      assert.deepEqual(await episodeDirectories(), before, "cancelled files must be removed before capacity is released");
+    }
+    releases.push(owner);
+    await release(owner);
+  });
+
+  let response: ServerResponse | undefined;
+  const requests: string[] = [];
+  const handlers: Promise<void>[] = [];
+  const server = createServer((req, res) => {
+    requests.push(req.url!);
+    response = res;
+    if (pauseDelivery) {
+      const write = res.write.bind(res);
+      // Send a real body byte, then simulate backpressure without scheduling a
+      // drain. The real pipeline/socket stays open until the client's abort;
+      // this avoids racing a tiny fixture's completed delivery.
+      res.write = ((chunk: Buffer) => {
+        assert.equal(write(chunk.subarray(0, 1)), true);
+        return false;
+      }) as typeof res.write;
+    }
+    Object.assign(req, {
+      params: { id: req.url!.split("/").at(-2)! },
+      log: {
+        info() {},
+        error() { assert.fail("Unexpected HTTP export error"); },
+      },
+    });
+    handlers.push(handler(req, res, () => {}));
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const origin = `http://127.0.0.1:${address.port}`;
+  const previous = ["window", "document", "Worker"].map(key => ({
+    key, descriptor: Object.getOwnPropertyDescriptor(globalThis, key),
+  }));
+  const downloads: Blob[] = [];
+  let clicks = 0;
+  let anchors = 0;
+  Object.defineProperty(globalThis, "window", {
+    configurable: true, value: { location: { origin }, setTimeout },
+  });
+  Object.defineProperty(globalThis, "document", {
+    configurable: true, value: {
+      createElement(tag: string) {
+        assert.equal(tag, "a");
+        anchors++;
+        return { href: "", download: "", click() { clicks++; } };
+      },
+    },
+  });
+  NodeZipWorker.instances = [];
+  Object.defineProperty(globalThis, "Worker", { configurable: true, value: NodeZipWorker });
+  mock.method(URL, "createObjectURL", (blob: Blob) => {
+    downloads.push(blob);
+    return "blob:series-test";
+  });
+  mock.method(URL, "revokeObjectURL", () => {});
+  t.after(() => {
+    for (const worker of NodeZipWorker.instances) worker.terminate();
+    for (const { key, descriptor } of previous) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else Reflect.deleteProperty(globalThis, key);
+    }
+  });
+
+  const controller = new AbortController();
+  const bodyStarted = Promise.withResolvers<void>();
+  const statuses: number[] = [];
+  mock.method(globalThis, "fetch", async (input, init) => {
+    const url = new URL(String(input), origin);
+    // Only provider bytes are stubbed; the helper's customFetch and its signal
+    // cross an actual HTTP connection to the production episode handler.
+    if (url.hostname === "media.example") return videoResponse();
+    assert.equal(url.origin, origin);
+    const result = await nativeHttpFetch(url, init);
+    statuses.push(result.status);
+    if (pauseDelivery) {
+      const blob = result.blob.bind(result);
+      mock.method(result, "blob", () => {
+        const reading = blob();
+        bodyStarted.resolve();
+        return reading;
+      });
+    }
+    return result;
+  });
+  const cancelled = downloadSeriesPackage(bootstrap, controller.signal);
+  const rejection = assert.rejects(cancelled, { name: "AbortError" });
+  try {
+    await bodyStarted.promise;
+    assert.equal(response?.writableFinished, false);
+    assert.equal(owners.size, 1);
+    assert.equal((await episodeDirectories()).length, before.length + 1);
+    assert.deepEqual(requests, ["/api/studio/episodes/1/video"]);
+
+    controller.abort();
+    await rejection;
+    await Promise.all(handlers);
+    assert.equal(response?.destroyed, true);
+    assert.equal(response?.writableFinished, false, "cancellation must interrupt streaming, not follow completion");
+    assert.equal(owners.size, 0);
+    assert.equal(releases.length, 1);
+    assert.deepEqual(await episodeDirectories(), before);
+    assert.deepEqual(requests, ["/api/studio/episodes/1/video"], "no later episode request after cancellation");
+    assert.equal(NodeZipWorker.instances.length, 0, "cancelled series must never start ZIP compression");
+    assert.equal(downloads.length, 0);
+    assert.equal(anchors, 0);
+    assert.equal(clicks, 0);
+
+    pauseDelivery = false;
+    await downloadSeriesPackage(bootstrap, new AbortController().signal);
+    await Promise.all(handlers);
+    assert.deepEqual(requests, [
+      "/api/studio/episodes/1/video",
+      "/api/studio/episodes/1/video", "/api/studio/episodes/2/video",
+    ]);
+    assert.deepEqual(statuses, [200, 200, 200], "retry must be admitted, not packaged as unavailable episodes");
+    assert.equal(releases.length, 3, "each cancelled or completed delivery releases exactly once");
+    assert.equal(new Set(releases).size, 3);
+    assert.equal(owners.size, 0);
+    assert.deepEqual(await episodeDirectories(), before);
+    assert.equal(NodeZipWorker.instances.length, 1);
+    assert.equal(NodeZipWorker.instances[0].terminated, true);
+    assert.equal(downloads.length, 1);
+    assert.equal(downloads[0].type, "application/zip");
+    const files = unzipSync(new Uint8Array(await downloads[0].arrayBuffer()));
+    for (const id of [1, 2]) {
+      const folder = `episodes/E0${id}-Episode ${id}`;
+      assert.ok(files[`${folder}/episode.mp4`].length > 0);
+      assert.match(new TextDecoder().decode(files[`${folder}/episode-video-report.txt`]), /Status: ready/);
+    }
+    assert.equal(anchors, 1);
+    assert.equal(clicks, 1);
+  } finally {
+    controller.abort();
+    response?.destroy();
+    server.closeAllConnections();
+    await Promise.allSettled([cancelled, ...handlers]);
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+  assert.equal(owners.size, 0);
 });
 
 test("successful lease renewals through assembly and blocked delivery never extend the total deadline", { timeout: 30_000 }, async () => {
