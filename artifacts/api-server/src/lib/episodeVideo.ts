@@ -1,12 +1,15 @@
 import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { isIP } from "node:net";
 import { episodeExportAdmission, type EpisodeExportLease } from "./episodeExportAdmission";
+import { EpisodeTemporaryStorage } from "./episodeTemporaryStorage";
+import { EPISODE_EXPORT_LIFETIME_MS } from "./episodeExportTiming";
+import { logger } from "./logger";
+export { EPISODE_EXPORT_LIFETIME_MS } from "./episodeExportTiming";
 export {
   EpisodeVideoBusyError, MAX_CONCURRENT_EPISODE_EXPORTS, EPISODE_EXPORT_RETRY_SECONDS,
 } from "./episodeExportAdmission";
@@ -18,7 +21,25 @@ const CLIP_TIMEOUT_MS = 30_000;
 const FFMPEG_TIMEOUT_MS = 3 * 60_000;
 // One budget across all clips, conversion, and delivery; per-tool timeouts alone
 // cannot bound a many-clip export or a client that never drains its response.
-export const EPISODE_EXPORT_LIFETIME_MS = 15 * 60_000;
+const temporaryStorage = new EpisodeTemporaryStorage(owner => episodeExportAdmission.isActive(owner));
+let recoveryTimer: NodeJS.Timeout | undefined;
+
+export function startEpisodeTemporaryRecovery(): void {
+  if (recoveryTimer) return;
+  const recover = async () => {
+    try {
+      const removed = await temporaryStorage.recover((err, directory) => {
+        logger.warn({ err, directory }, "Could not recover temporary episode directory");
+      });
+      if (removed) logger.info({ removed }, "Recovered abandoned temporary episode directories");
+    } catch (err) {
+      logger.warn({ err }, "Could not scan temporary episode directories");
+    }
+  };
+  void recover();
+  recoveryTimer = setInterval(() => { void recover(); }, 5 * 60_000);
+  recoveryTimer.unref();
+}
 
 // Shared provider-clip admission is independent of the storyboard movie queue.
 const retainedExports = new Map<string, { lease: EpisodeExportLease; deadline: NodeJS.Timeout }>();
@@ -159,9 +180,13 @@ async function fetchClip(urlValue: string, outputPath: string, allowedBytes: num
   return bytesWritten;
 }
 
-function runMediaTool(command: "ffmpeg" | "ffprobe", args: string[], signal?: AbortSignal): Promise<string> {
+async function runMediaTool(directory: string, command: "ffmpeg" | "ffprobe", args: string[], signal?: AbortSignal): Promise<string> {
   signal?.throwIfAborted();
-  return new Promise((resolve, reject) => {
+  // Publish an uncertain state BEFORE spawn. If the parent dies before it can
+  // record the child PID, recovery retains the directory rather than racing it.
+  await temporaryStorage.setMediaProcess(directory, "starting");
+  try {
+    signal?.throwIfAborted();
     const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
@@ -175,21 +200,38 @@ function runMediaTool(command: "ffmpeg" | "ffprobe", args: string[], signal?: Ab
     };
     child.stdout.on("data", (chunk: Buffer) => { stdout = (stdout + chunk.toString()).slice(-2000); });
     child.stderr.on("data", (chunk: Buffer) => { stderr = (stderr + chunk.toString()).slice(-2000); });
-    child.on("error", error => {
-      cleanup();
-      reject(error);
+    // Resolve errors as values until the PID write completes, avoiding an
+    // unhandled rejection if spawn fails during that asynchronous write.
+    const completion = new Promise<{ error?: unknown }>(resolve => {
+      let spawnError: Error | undefined;
+      child.on("error", error => { spawnError = error; });
+      child.on("close", code => {
+        cleanup();
+        resolve({
+          error: signal?.aborted ? signal.reason : spawnError ?? (code === 0 ? undefined :
+            new Error(code === null ? "Media conversion timed out." : `Media conversion failed: ${stderr}`)),
+        });
+      });
     });
-    child.on("close", code => {
-      cleanup();
-      if (signal?.aborted) reject(signal.reason);
-      else if (code === 0) resolve(stdout.trim());
-      else reject(new Error(code === null ? "Media conversion timed out." : `Media conversion failed: ${stderr}`));
-    });
-  });
+    if (signal?.aborted) abort();
+    try {
+      if (child.pid) await temporaryStorage.setMediaProcess(directory, child.pid);
+    } catch (error) {
+      child.kill("SIGKILL");
+      await completion;
+      throw error;
+    }
+    const result = await completion;
+    if (result.error) throw result.error;
+    return stdout.trim();
+  } finally {
+    // The child has closed before clearing its durable ownership.
+    await temporaryStorage.setMediaProcess(directory, null);
+  }
 }
 
-async function normalizeClip(inputPath: string, outputPath: string, signal?: AbortSignal): Promise<void> {
-  const audioStream = await runMediaTool("ffprobe", [
+async function normalizeClip(directory: string, inputPath: string, outputPath: string, signal?: AbortSignal): Promise<void> {
+  const audioStream = await runMediaTool(directory, "ffprobe", [
     "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=index", "-of", "csv=p=0", inputPath,
   ], signal);
   const args = ["-hide_banner", "-loglevel", "error", "-y", "-i", inputPath];
@@ -202,7 +244,7 @@ async function normalizeClip(inputPath: string, outputPath: string, signal?: Abo
     "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
     "-shortest", "-movflags", "+faststart", outputPath,
   );
-  await runMediaTool("ffmpeg", args, signal);
+  await runMediaTool(directory, "ffmpeg", args, signal);
 }
 
 export async function assembleEpisodeVideo(
@@ -214,6 +256,7 @@ export async function assembleEpisodeVideo(
   // Acquire globally before creating files or contacting providers. No local fallback.
   const lease = await episodeExportAdmission.acquire();
   const lifetime = new AbortController();
+  const expiresAt = Date.now() + EPISODE_EXPORT_LIFETIME_MS;
   const deadline = setTimeout(() => lifetime.abort(new DOMException(
     "The episode export exceeded its total time limit. Please retry the download.",
     "TimeoutError",
@@ -227,7 +270,7 @@ export async function assembleEpisodeVideo(
   try {
     lease.assertOwned();
     signal.throwIfAborted();
-    directory = await mkdtemp(join(tmpdir(), "frame-faith-episode-"));
+    directory = await temporaryStorage.create(lease.owner, expiresAt);
     signal?.throwIfAborted();
     for (const clip of clips) {
       lease.assertOwned();
@@ -262,7 +305,7 @@ export async function assembleEpisodeVideo(
       const normalizedPath = join(directory, `segment-${sequence}.mp4`);
       try {
         sourceBytes += await fetchClip(clip.url, sourcePath, Math.min(limits.clipBytes, limits.sourceBytes - sourceBytes), signal);
-        await normalizeClip(sourcePath, normalizedPath, signal);
+        await normalizeClip(directory, sourcePath, normalizedPath, signal);
         normalizedFiles.push(normalizedPath);
         report.usedClipIds.push(clip.id);
       } catch (error) {
@@ -293,7 +336,7 @@ export async function assembleEpisodeVideo(
     const concatPath = join(directory, "clips.txt");
     const outputPath = join(directory, "episode.mp4");
     await writeFile(concatPath, concatList);
-    await runMediaTool("ffmpeg", [
+    await runMediaTool(directory, "ffmpeg", [
       "-hide_banner", "-loglevel", "error", "-y",
       "-f", "concat", "-safe", "0", "-i", concatPath,
       "-c", "copy", "-movflags", "+faststart", outputPath,
@@ -305,7 +348,7 @@ export async function assembleEpisodeVideo(
     return { directory, outputPath, report, signal };
   } catch (error) {
     try {
-      if (directory) await rm(directory, { recursive: true, force: true });
+      if (directory) await temporaryStorage.remove(directory);
     } finally {
       clearTimeout(deadline);
       await lease.release();
@@ -319,7 +362,7 @@ export async function removeEpisodeVideo(directory: string): Promise<void> {
   // Claim cleanup before its first await so duplicate cleanup cannot release early.
   retainedExports.delete(directory);
   try {
-    await rm(directory, { recursive: true, force: true });
+    await temporaryStorage.remove(directory);
   } finally {
     clearTimeout(retained?.deadline);
     // Deleting twice (or concurrently) must never release another export's slot.

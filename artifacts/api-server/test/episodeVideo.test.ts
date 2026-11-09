@@ -714,6 +714,11 @@ test("completed MP4s retain admission until delivery cleanup, which releases eac
   try {
     for (let index = 0; index < MAX_CONCURRENT_EPISODE_EXPORTS; index++) {
       completed.push(await assembleEpisodeVideo([clip(index + 1)]));
+      const metadata = JSON.parse(await readFile(join(completed.at(-1)!.directory, ".episode-owner.json"), "utf8"));
+      assert.equal(owners.has(metadata.owner), true, "folder ownership matches the retained admission lease");
+      assert.equal(metadata.pid, process.pid);
+      assert.equal(metadata.mediaPid, null, "finished media process no longer owns the retained download");
+      assert.ok(metadata.deadline > Date.now() && metadata.deadline <= Date.now() + EPISODE_EXPORT_LIFETIME_MS);
     }
     const fetchCount = mock.method(globalThis, "fetch", async () => videoResponse());
     await assert.rejects(assembleEpisodeVideo([clip(99)]), EpisodeVideoBusyError);
@@ -760,6 +765,7 @@ test("losing shared ownership aborts an active provider request and frees its te
   const controller = new AbortController();
   let released = 0;
   mock.method(episodeExportAdmission, "acquire", async () => ({
+    owner: "00000000-0000-4000-8000-000000000001",
     signal: controller.signal,
     assertOwned: () => controller.signal.throwIfAborted(),
     async release() { released++; },
@@ -795,6 +801,7 @@ test("HTTP delivery stops and cleans up when its retained lease loses ownership"
   let released = false;
   let writes = 0;
   mock.method(episodeExportAdmission, "acquire", async () => ({
+    owner: "00000000-0000-4000-8000-000000000002",
     signal: controller.signal,
     assertOwned: () => controller.signal.throwIfAborted(),
     async release() { released = true; },
@@ -876,6 +883,16 @@ exec '${tool === "ffmpeg" ? realFfmpeg : realFfprobe}' "$@"
         await new Promise(resolve => setTimeout(resolve, 10));
       }
       assert.ok(pid, `media process never reached ${stage}`);
+      // The stub may start just before its PID write completes; wait for the
+      // durable publication, then verify all three media stages are protected.
+      const directory = (await episodeDirectories()).find(path => !before.includes(path))!;
+      let metadata: { mediaPid?: number | string } = {};
+      for (let attempt = 0; attempt < 500; attempt++) {
+        metadata = JSON.parse(await readFile(join(tmpdir(), directory, ".episode-owner.json"), "utf8"));
+        if (metadata.mediaPid === pid) break;
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      assert.equal(metadata.mediaPid, pid);
       if (reason === "deadline") deadlines.at(-1)!.expire();
       else controller.abort();
       await rejection;

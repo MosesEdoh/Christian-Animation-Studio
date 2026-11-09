@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { sql } from "drizzle-orm";
 import { createBoundedDatabase } from "@workspace/db";
 import { logger } from "./logger";
+import { EPISODE_EXPORT_LEASE_MS } from "./episodeExportTiming";
 
 export const MAX_CONCURRENT_EPISODE_EXPORTS = 2;
 export const EPISODE_EXPORT_RETRY_SECONDS = 15;
@@ -9,7 +10,7 @@ export const EPISODE_EXPORT_POOL_NAME = "provider-clip-episode";
 export const EPISODE_EXPORT_COORDINATION_ALERT_THRESHOLD_COUNT = 3;
 export const EPISODE_EXPORT_COORDINATION_ALERT_WINDOW_SECONDS = 300;
 export const EPISODE_EXPORT_CAPACITY_SIGNAL_THRESHOLD_COUNT = 10;
-const LEASE_MS = 60_000;
+const LEASE_MS = EPISODE_EXPORT_LEASE_MS;
 const RENEW_MS = 15_000;
 // Stop work well before another instance can reuse an expired lease.
 const SAFETY_MS = 10_000;
@@ -35,6 +36,7 @@ export class EpisodeExportAdmissionError extends Error {
 }
 
 export interface EpisodeExportLease {
+  readonly owner: string;
   signal: AbortSignal;
   assertOwned(): void;
   release(): Promise<void>;
@@ -102,6 +104,13 @@ export class PostgresEpisodeAdmissionStore implements EpisodeAdmissionStore {
     const db = await getDatabase();
     await db.execute(sql`DELETE FROM episode_export_leases
       WHERE owner = ${owner}::uuid AND pool = ${this.poolName}`);
+  }
+
+  async isActive(owner: string): Promise<boolean> {
+    const db = getDatabase();
+    const result = await db.execute(sql`SELECT owner FROM episode_export_leases
+      WHERE owner = ${owner}::uuid AND pool = ${this.poolName} AND expires_at > clock_timestamp()`);
+    return result.rows.length > 0;
   }
 }
 
@@ -214,10 +223,11 @@ export async function acquireEpisodeExportLease(
     await release();
     throw error;
   }
-  return { signal: controller.signal, assertOwned, release };
+  return { owner, signal: controller.signal, assertOwned, release };
 }
 
 const sharedStore = new PostgresEpisodeAdmissionStore();
 export const episodeExportAdmission = {
   acquire: () => acquireEpisodeExportLease(sharedStore),
+  isActive: (owner: string) => sharedStore.isActive(owner),
 };

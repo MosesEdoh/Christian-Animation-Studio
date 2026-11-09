@@ -62,6 +62,7 @@ test("heartbeat loss aborts work, and release is idempotent", async () => {
       return false;
     };
     const lease = await acquireEpisodeExportLease(store, timing, telemetry);
+    assert.equal(store.owners.has(lease.owner), true);
     await delay(60);
     assert.equal(lease.signal.aborted, true);
     assert.throws(lease.assertOwned, /ownership was lost/);
@@ -115,6 +116,28 @@ test("release waits for an in-flight heartbeat before deleting its owner", async
 
 // This is intentionally a real database integration test, never a silently
 // skipped/mocked substitute. Each run owns unique pool names and deletes only them.
+test("recovery ownership probes use the shared pool and database lease expiry", async t => {
+  const { db } = await import("@workspace/db");
+  const { sql } = await import("drizzle-orm");
+  const poolName = `episode-recovery-test-${randomUUID()}`;
+  const store = new PostgresEpisodeAdmissionStore(poolName);
+  const owner = randomUUID();
+  t.after(async () => {
+    await db.execute(sql`DELETE FROM episode_export_leases WHERE pool = ${poolName}`);
+    await db.execute(sql`DELETE FROM episode_export_pools WHERE name = ${poolName}`);
+  });
+  assert.equal(await store.isActive(owner), false);
+  assert.equal(await store.acquire(owner), true);
+  assert.equal(await store.isActive(owner), true);
+  assert.equal(await new PostgresEpisodeAdmissionStore(`${poolName}-other`).isActive(owner), false);
+  await db.execute(sql`UPDATE episode_export_leases
+    SET expires_at = clock_timestamp() - interval '1 second'
+    WHERE owner = ${owner}::uuid AND pool = ${poolName}`);
+  assert.equal(await store.isActive(owner), false);
+  await store.release(owner);
+  assert.equal(await store.isActive(owner), false);
+});
+
 test("independent processes enforce a global capacity of two and recover from SIGKILL", { timeout: 40_000 }, async t => {
   const { db } = await import("@workspace/db");
   const { sql } = await import("drizzle-orm");
