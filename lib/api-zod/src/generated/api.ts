@@ -23,6 +23,11 @@ export const ListStudioExportsQueryParams = zod.object({
   "limit": zod.coerce.number().int().min(1).max(listStudioExportsQueryLimitMax).default(listStudioExportsQueryLimitDefault)
 })
 
+export const listStudioExportsResponseSizeBytesMin = 0;
+export const listStudioExportsResponseSizeBytesMax = 9007199254740991;
+
+
+
 export const ListStudioExportsResponseItem = zod.object({
   "id": zod.int(),
   "episodeId": zod.int().nullable(),
@@ -31,6 +36,7 @@ export const ListStudioExportsResponseItem = zod.object({
   "status": zod.enum(['queued', 'rendering', 'ready', 'failed', 'cancelled']),
   "progress": zod.int(),
   "url": zod.string().nullable(),
+  "sizeBytes": zod.int().min(listStudioExportsResponseSizeBytesMin).max(listStudioExportsResponseSizeBytesMax).nullable().describe('Completed MP4 size in bytes. Null for historical exports without recorded sizes and exports without a saved movie.'),
   "error": zod.string().nullable(),
   "createdAt": zod.coerce.date()
 })
@@ -46,6 +52,11 @@ export const CreateStudioExportBody = zod.object({
   "quality": zod.enum(['720p', '1080p'])
 })
 
+export const createStudioExportResponseSizeBytesMin = 0;
+export const createStudioExportResponseSizeBytesMax = 9007199254740991;
+
+
+
 export const CreateStudioExportResponse = zod.object({
   "id": zod.int(),
   "episodeId": zod.int().nullable(),
@@ -54,6 +65,7 @@ export const CreateStudioExportResponse = zod.object({
   "status": zod.enum(['queued', 'rendering', 'ready', 'failed', 'cancelled']),
   "progress": zod.int(),
   "url": zod.string().nullable(),
+  "sizeBytes": zod.int().min(createStudioExportResponseSizeBytesMin).max(createStudioExportResponseSizeBytesMax).nullable().describe('Completed MP4 size in bytes. Null for historical exports without recorded sizes and exports without a saved movie.'),
   "error": zod.string().nullable(),
   "createdAt": zod.coerce.date()
 })
@@ -99,6 +111,11 @@ export const CancelStudioExportParams = zod.object({
   "id": zod.coerce.number().int()
 })
 
+export const cancelStudioExportResponseSizeBytesMin = 0;
+export const cancelStudioExportResponseSizeBytesMax = 9007199254740991;
+
+
+
 export const CancelStudioExportResponse = zod.object({
   "id": zod.int(),
   "episodeId": zod.int().nullable(),
@@ -107,6 +124,7 @@ export const CancelStudioExportResponse = zod.object({
   "status": zod.enum(['queued', 'rendering', 'ready', 'failed', 'cancelled']),
   "progress": zod.int(),
   "url": zod.string().nullable(),
+  "sizeBytes": zod.int().min(cancelStudioExportResponseSizeBytesMin).max(cancelStudioExportResponseSizeBytesMax).nullable().describe('Completed MP4 size in bytes. Null for historical exports without recorded sizes and exports without a saved movie.'),
   "error": zod.string().nullable(),
   "createdAt": zod.coerce.date()
 })

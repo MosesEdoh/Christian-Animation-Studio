@@ -1,4 +1,5 @@
 import {
+  bigint,
   integer,
   pgTable,
   serial,
@@ -101,6 +102,7 @@ export const studioExportsTable = pgTable("studio_exports", {
   status: text("status", { enum: ["queued", "rendering", "ready", "failed", "cancelled"] }).notNull().default("queued"),
   progress: integer("progress").notNull().default(0),
   objectPath: text("object_path"),
+  sizeBytes: bigint("size_bytes", { mode: "number" }),
   error: text("error"),
   startedAt: timestamp("started_at", { withTimezone: true }),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),

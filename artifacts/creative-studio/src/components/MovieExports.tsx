@@ -2,6 +2,7 @@ import { useRef, useState } from 'react';
 import { getPreflightStudioExportQueryKey, preflightStudioExport, usePreflightStudioExport, useCancelStudioExport, useCreateStudioExport, useDeleteStudioExport, getListStudioExportsQueryKey, type Episode, type StudioExport } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { updateMovieExportCaches, useMovieExportHistory } from '../hooks/useMovieExportHistory';
+import { movieSizeLabel } from '../lib/movieSize';
 
 type MovieFormat = { aspectRatio: '16:9' | '9:16'; quality: '720p' | '1080p' };
 type MovieBatch = {
@@ -154,6 +155,7 @@ export function MovieExports({ episodes }: { episodes: Episode[] }) {
     <div style={{ marginTop: 16 }} aria-live="polite">
       {jobs.jobs.map(job => <p key={job.id} data-testid={`movie-job-${job.id}`}>
         #{job.id} · {job.episodeId ? `Episode ${episodes.find(episode => episode.id === job.episodeId)?.number ?? job.episodeId}` : 'Entire series'} · {job.aspectRatio} · {job.quality} — {job.status}{job.status === 'rendering' ? ` ${job.progress}%` : ''}
+        {job.status === 'ready' && <> · <span data-testid={`movie-size-${job.id}`} title={job.sizeBytes == null ? 'This older export has no recorded file size.' : `${job.sizeBytes.toLocaleString()} bytes`}>{movieSizeLabel(job.sizeBytes)}</span></>}
         {(job.status === 'queued' || job.status === 'rendering') && <> · <button disabled={cancellingId !== null} data-testid={`cancel-movie-${job.id}`} onClick={() => cancelJob(job.id)}>{cancellingId === job.id ? 'Cancelling…' : 'Cancel movie'}</button></>}
         {(job.status === 'failed' || job.status === 'cancelled') && <> · {job.status === 'cancelled' ? 'Cancelled. No movie was saved.' : job.error} <button disabled={queueing} onClick={() => queue(false, job)}>Build again</button></>}
         {(['ready', 'failed', 'cancelled'] as const).some(status => status === job.status) && <> · <button disabled={deletingId !== null} data-testid={`delete-movie-${job.id}`} onClick={() => deleteJob(job)}>{deletingId === job.id ? 'Deleting…' : 'Delete movie'}</button></>}

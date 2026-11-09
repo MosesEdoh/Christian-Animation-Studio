@@ -79,6 +79,13 @@ export interface StudioExport {
   progress: number;
   /** @nullable */
   url: string | null;
+  /**
+     * Completed MP4 size in bytes. Null for historical exports without recorded sizes and exports without a saved movie.
+     * @minimum 0
+     * @maximum 9007199254740991
+     * @nullable
+     */
+  sizeBytes: number | null;
   /** @nullable */
   error: string | null;
   createdAt: string;

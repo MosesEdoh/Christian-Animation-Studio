@@ -24,7 +24,7 @@ let stallWrite: ((patch: Partial<Row>, condition: SQL, apply: () => Row[]) => Pr
 const dialect = new PgDialect();
 const makeJob = (id: number, status: Row["status"] = "queued"): Row => ({
   id, episodeId: 1, status, aspectRatio: "16:9", quality: "720p",
-  progress: 0, objectPath: null, error: null, startedAt: null, createdAt: new Date(),
+  progress: 0, objectPath: null, sizeBytes: null, error: null, startedAt: null, createdAt: new Date(),
 });
 // Evaluate the worker's real Drizzle predicates, not hand-written cancellation logic.
 function matches(row: Row, condition: SQL) {
@@ -109,6 +109,23 @@ test("movie database work has server, client, and connection timeouts independen
   assert.equal(movieDb.$client.options.max, 2);
 });
 
+test("completed movies persist the exact uploaded MP4 byte size", async () => {
+  largeSeries = true;
+  let uploadedBytes = 0;
+  mock.method(ObjectStorageService.prototype, "getPrivateObjectDir", () => "/test/private");
+  mock.method(objectStorageClient, "bucket", () => ({
+    file: () => ({ createWriteStream: () => new Writable({
+      write(chunk, _encoding, callback) { uploadedBytes += chunk.length; callback(); },
+    }) }),
+  }));
+  rows.push(makeJob(1));
+  await wakeMovieWorker();
+  assert.equal(rows[0].status, "ready");
+  assert.ok(uploadedBytes > 0);
+  assert.equal(rows[0].sizeBytes, uploadedBytes);
+  assert.equal(exportView(rows[0]).sizeBytes, uploadedBytes);
+});
+
 test("queued cancellation is idempotent, hidden from downloads, and excluded from worker recovery", async () => {
   rows.push(makeJob(1));
   assert.equal((await cancelMovieExport(1))?.status, "cancelled");
@@ -117,6 +134,7 @@ test("queued cancellation is idempotent, hidden from downloads, and excluded fro
   assert.equal(rows[0].status, "cancelled");
   assert.equal(exportView(rows[0]).url, null);
   assert.equal(rows[0].error, null);
+  assert.equal(rows[0].sizeBytes, null);
   assert.equal(framesStarted, false);
   assert.equal(await cancelMovieExport(999), undefined);
 });

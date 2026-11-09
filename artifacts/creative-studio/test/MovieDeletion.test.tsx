@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import { MovieExports } from '../src/components/MovieExports';
 import { episode } from './episodeFixtures';
+import { movieSizeLabel } from '../src/lib/movieSize';
 
 const api = vi.hoisted(() => ({ remove: vi.fn(), jobs: [] as any[] }));
 vi.mock('../src/hooks/useMovieExportHistory', async importOriginal => ({
@@ -28,7 +29,7 @@ vi.mock('@workspace/api-client-react', async importOriginal => ({
 const job = (id: number, status = 'ready') => ({
   id, episodeId: episode.id, status, aspectRatio: '16:9', quality: '720p',
   progress: 100, error: null, url: status === 'ready' ? `/api/studio/exports/${id}/file` : null,
-  createdAt: new Date().toISOString(),
+  sizeBytes: id === 3 ? 12_500_000 : null, createdAt: new Date().toISOString(),
 });
 beforeEach(() => {
   api.jobs = [job(3), job(2)];
@@ -55,6 +56,8 @@ it('disables deletion while pending, removes history, and selects the next previ
     finish = () => { api.jobs = [job(2)]; resolve(); };
   }));
   const { cache } = mount();
+  expect(screen.getByTestId('movie-size-3')).toHaveTextContent('12.5 MB');
+  expect(screen.getByTestId('movie-size-2')).toHaveTextContent('Size unknown');
   const invalidate = vi.spyOn(cache, 'invalidateQueries');
   fireEvent.click(screen.getByTestId('delete-movie-3'));
   expect(api.remove).toHaveBeenCalledWith({ id: 3 });
@@ -62,6 +65,8 @@ it('disables deletion while pending, removes history, and selects the next previ
   expect(screen.getByTestId('delete-movie-2')).toBeDisabled();
   finish();
   await waitFor(() => expect(screen.queryByTestId('movie-job-3')).not.toBeInTheDocument());
+  expect(screen.queryByTestId('movie-size-3')).not.toBeInTheDocument();
+  expect(screen.getByTestId('movie-size-2')).toHaveTextContent('Size unknown');
   expect(screen.getByTestId('movie-preview')).toHaveAttribute('src', '/api/studio/exports/2/file');
   expect(invalidate).toHaveBeenCalledWith({ queryKey: ['/api/studio/exports'] });
 });
@@ -88,6 +93,7 @@ it('retains the movie and restores deletion after an error', async () => {
   expect(await screen.findByRole('alert')).toHaveTextContent('Storage unavailable');
   expect(screen.getByTestId('movie-preview')).toHaveAttribute('src', '/api/studio/exports/3/file');
   expect(screen.getByTestId('delete-movie-3')).toBeEnabled();
+  expect(screen.getByTestId('movie-size-3')).toHaveTextContent('12.5 MB');
 });
 it('only offers deletion for finished movies, leaving active movies on the cancel path', () => {
   api.jobs = ['queued', 'rendering', 'failed', 'cancelled'].map((status, i) => job(i + 1, status));
@@ -101,4 +107,19 @@ it('offers deletion for older movies beyond the first sixteen entries', () => {
   api.jobs = Array.from({ length: 17 }, (_, index) => job(index + 1));
   mount();
   expect(screen.getByTestId('delete-movie-17')).toBeVisible();
+});
+
+it('formats exact byte sizes without treating unknown sizes as zero', () => {
+  for (const [bytes, label] of [
+    [null, 'Size unknown'], [undefined, 'Size unknown'], [0, '0 bytes'],
+    [999, '999 bytes'], [1000, '1 kB'], [1_500_000, '1.5 MB'],
+    [3_000_000_000, '3 GB'],
+  ] as const) expect(movieSizeLabel(bytes)).toBe(label);
+});
+
+it('shows sizes only for saved movies, not active or unsuccessful exports', () => {
+  api.jobs = ['queued', 'rendering', 'failed', 'cancelled'].map((status, i) => job(i + 1, status));
+  mount();
+  expect(screen.queryByText('Size unknown')).not.toBeInTheDocument();
+  expect(screen.queryByTestId('movie-size-3')).not.toBeInTheDocument();
 });

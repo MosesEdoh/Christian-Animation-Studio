@@ -43,7 +43,7 @@ const cancelledError = () => new Error("Storyboard movie cancelled");
 export async function cancelMovieExport(id: number) {
   // The status comparison arbitrates completion/cancellation races atomically.
   const [cancelled] = await db.update(studioExportsTable)
-    .set({ status: "cancelled", progress: 0, error: null, objectPath: null, startedAt: null })
+    .set({ status: "cancelled", progress: 0, error: null, objectPath: null, sizeBytes: null, startedAt: null })
     .where(and(eq(studioExportsTable.id, id), inArray(studioExportsTable.status, ["queued", "rendering"]))).returning();
   if (cancelled && activeJobId === id) activeController?.abort(cancelledError());
   if (cancelled) return cancelled;
@@ -188,14 +188,14 @@ async function render(row: ExportRow, budget: MovieBudget) {
     const path = uploadedPath;
     let abandoned = false;
     const completion = Promise.resolve(movieDb.update(studioExportsTable)
-      .set({ status: "ready", progress: 100, objectPath: path, error: null })
+      .set({ status: "ready", progress: 100, objectPath: path, sizeBytes: outputSize, error: null })
       .where(and(renderingJob(row.id), sql`clock_timestamp() < ${budget.expiresAt}`)).returning())
       .then(async saved => {
         // A query may commit before its response arrives. If our wait was
         // abandoned, compensate even if the normal failure write ran earlier.
         if (saved.length && (abandoned || signal.aborted)) {
           await movieOperation(movieDb.update(studioExportsTable)
-            .set({ status: "failed", progress: 0, objectPath: null, startedAt: null,
+            .set({ status: "failed", progress: 0, objectPath: null, sizeBytes: null, startedAt: null,
               error: "Saving the movie exceeded its deadline. Try building it again." })
             .where(and(eq(studioExportsTable.id, row.id), eq(studioExportsTable.status, "ready"), eq(studioExportsTable.objectPath, path))));
         }
@@ -263,7 +263,7 @@ export async function wakeMovieWorker() {
           : { status: "failed", progress: 0, startedAt: null, error:
             (budget.signal.aborted ? budget.signal.reason : error) instanceof MovieBudgetError
               ? ((budget.signal.aborted ? budget.signal.reason : error) as MovieBudgetError).message
-              : "Movie could not be built. Check references and try building again.", objectPath: null })
+              : "Movie could not be built. Check references and try building again.", objectPath: null, sizeBytes: null })
           .where(and(eq(studioExportsTable.id, job.id), eq(studioExportsTable.startedAt, job.startedAt!),
             inArray(studioExportsTable.status, ["rendering", "ready"]))));
         } catch (statusError) {

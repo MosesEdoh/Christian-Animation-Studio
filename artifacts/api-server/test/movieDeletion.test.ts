@@ -19,7 +19,7 @@ let approved: boolean;
 const dialect = new PgDialect();
 const job = (id: number, status: Row["status"], objectPath: string | null = "/objects/movie.mp4"): Row => ({
   id, status, objectPath, episodeId: 1, aspectRatio: "16:9", quality: "720p",
-  progress: 100, error: null, startedAt: null, createdAt: new Date(),
+  progress: 100, sizeBytes: null, error: null, startedAt: null, createdAt: new Date(),
 });
 function matches(row: Row, predicate: SQL) {
   const { params } = dialect.sqlToQuery(predicate);
@@ -60,6 +60,15 @@ beforeEach(() => {
   });
 });
 afterEach(() => mock.restoreAll());
+
+test("movie history exposes known sizes and explicit null for historical exports, then removes deleted sizes", async () => {
+  rows = [{ ...job(2, "ready"), sizeBytes: 3_000_000_000 }, job(1, "ready")];
+  const history = await (await request("?limit=100", "GET")).json();
+  assert.deepEqual(history.map((row: Row) => row.sizeBytes), [3_000_000_000, null]);
+  assert.equal((await request("2")).status, 204);
+  const remaining = await (await request("?limit=100", "GET")).json();
+  assert.deepEqual(remaining.map((row: Row) => [row.id, row.sizeBytes]), [[1, null]]);
+});
 
 async function request(id: string, method = "DELETE") {
   const app = express();
