@@ -84,13 +84,17 @@ function validateClipUrl(value: string): URL {
   return url;
 }
 
-async function fetchClip(urlValue: string, outputPath: string, allowedBytes: number): Promise<number> {
+async function fetchClip(urlValue: string, outputPath: string, allowedBytes: number, signal?: AbortSignal): Promise<number> {
+  const downloadSignal = AbortSignal.any([
+    AbortSignal.timeout(CLIP_TIMEOUT_MS),
+    ...(signal ? [signal] : []),
+  ]);
   let url = validateClipUrl(urlValue);
   let response: Response | undefined;
   for (let redirect = 0; redirect <= MAX_REDIRECTS; redirect++) {
     response = await fetch(url, {
       redirect: "manual",
-      signal: AbortSignal.timeout(CLIP_TIMEOUT_MS),
+      signal: downloadSignal,
     });
     if (response.status < 300 || response.status >= 400) break;
     await response.body?.cancel();
@@ -131,6 +135,7 @@ async function fetchClip(urlValue: string, outputPath: string, allowedBytes: num
       Readable.fromWeb(response.body as import("node:stream/web").ReadableStream<Uint8Array>),
       limitStream,
       createWriteStream(outputPath, { flags: "wx" }),
+      { signal: downloadSignal },
     );
   } catch (error) {
     await rm(outputPath, { force: true });
@@ -143,30 +148,39 @@ async function fetchClip(urlValue: string, outputPath: string, allowedBytes: num
   return bytesWritten;
 }
 
-function runMediaTool(command: "ffmpeg" | "ffprobe", args: string[]): Promise<string> {
+function runMediaTool(command: "ffmpeg" | "ffprobe", args: string[], signal?: AbortSignal): Promise<string> {
+  signal?.throwIfAborted();
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
     const timeout = setTimeout(() => child.kill("SIGKILL"), FFMPEG_TIMEOUT_MS);
+    // Wait for close before rejecting so cleanup cannot race a live media process.
+    const abort = () => { child.kill("SIGKILL"); };
+    signal?.addEventListener("abort", abort, { once: true });
+    const cleanup = () => {
+      clearTimeout(timeout);
+      signal?.removeEventListener("abort", abort);
+    };
     child.stdout.on("data", (chunk: Buffer) => { stdout = (stdout + chunk.toString()).slice(-2000); });
     child.stderr.on("data", (chunk: Buffer) => { stderr = (stderr + chunk.toString()).slice(-2000); });
     child.on("error", error => {
-      clearTimeout(timeout);
+      cleanup();
       reject(error);
     });
     child.on("close", code => {
-      clearTimeout(timeout);
-      if (code === 0) resolve(stdout.trim());
+      cleanup();
+      if (signal?.aborted) reject(signal.reason);
+      else if (code === 0) resolve(stdout.trim());
       else reject(new Error(code === null ? "Media conversion timed out." : `Media conversion failed: ${stderr}`));
     });
   });
 }
 
-async function normalizeClip(inputPath: string, outputPath: string): Promise<void> {
+async function normalizeClip(inputPath: string, outputPath: string, signal?: AbortSignal): Promise<void> {
   const audioStream = await runMediaTool("ffprobe", [
     "-v", "error", "-select_streams", "a:0", "-show_entries", "stream=index", "-of", "csv=p=0", inputPath,
-  ]);
+  ], signal);
   const args = ["-hide_banner", "-loglevel", "error", "-y", "-i", inputPath];
   if (!audioStream) args.push("-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100");
   args.push(
@@ -177,19 +191,22 @@ async function normalizeClip(inputPath: string, outputPath: string): Promise<voi
     "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
     "-shortest", "-movflags", "+faststart", outputPath,
   );
-  await runMediaTool("ffmpeg", args);
+  await runMediaTool("ffmpeg", args, signal);
 }
 
 export async function assembleEpisodeVideo(
   clips: EpisodeVideoClip[],
   limits: EpisodeVideoLimits = DEFAULT_LIMITS,
+  signal?: AbortSignal,
 ): Promise<AssembledEpisodeVideo> {
+  signal?.throwIfAborted();
   const directory = await mkdtemp(join(tmpdir(), "frame-faith-episode-"));
   const report: EpisodeVideoReport = { usedClipIds: [], skippedClips: [] };
   const normalizedFiles: string[] = [];
   let sourceBytes = 0;
   try {
     for (const clip of clips) {
+      signal?.throwIfAborted();
       if (clip.status !== "ready") {
         report.skippedClips.push({
           clipId: clip.id,
@@ -219,11 +236,12 @@ export async function assembleEpisodeVideo(
       const sourcePath = join(directory, `source-${sequence}`);
       const normalizedPath = join(directory, `segment-${sequence}.mp4`);
       try {
-        sourceBytes += await fetchClip(clip.url, sourcePath, Math.min(limits.clipBytes, limits.sourceBytes - sourceBytes));
-        await normalizeClip(sourcePath, normalizedPath);
+        sourceBytes += await fetchClip(clip.url, sourcePath, Math.min(limits.clipBytes, limits.sourceBytes - sourceBytes), signal);
+        await normalizeClip(sourcePath, normalizedPath, signal);
         normalizedFiles.push(normalizedPath);
         report.usedClipIds.push(clip.id);
       } catch (error) {
+        signal?.throwIfAborted();
         await rm(sourcePath, { force: true });
         await rm(normalizedPath, { force: true });
         report.skippedClips.push({
@@ -241,6 +259,7 @@ export async function assembleEpisodeVideo(
       }
     }
 
+    signal?.throwIfAborted();
     if (!normalizedFiles.length) {
       throw new EpisodeVideoUnavailableError(report);
     }
@@ -253,7 +272,8 @@ export async function assembleEpisodeVideo(
       "-hide_banner", "-loglevel", "error", "-y",
       "-f", "concat", "-safe", "0", "-i", concatPath,
       "-c", "copy", "-movflags", "+faststart", outputPath,
-    ]);
+    ], signal);
+    signal?.throwIfAborted();
     return { directory, outputPath, report };
   } catch (error) {
     await rm(directory, { recursive: true, force: true });

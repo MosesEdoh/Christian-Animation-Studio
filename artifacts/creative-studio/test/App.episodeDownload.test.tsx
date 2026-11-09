@@ -51,7 +51,7 @@ describe('signed-in dashboard episode download wiring', () => {
     expect(downloadEpisodeVideo).not.toHaveBeenCalled();
     fireEvent.click(control(episode.id));
     await screen.findByText('MP4 download started. No clips were skipped.');
-    expect(downloadEpisodeVideo).toHaveBeenCalledExactlyOnceWith(episode);
+    expect(downloadEpisodeVideo).toHaveBeenCalledExactlyOnceWith(episode, expect.any(AbortSignal));
   });
 
   it.each(unavailable)('does not enable an episode whose only clip is %s', (_label, changes) => {

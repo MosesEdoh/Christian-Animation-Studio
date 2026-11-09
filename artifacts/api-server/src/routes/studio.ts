@@ -1,5 +1,6 @@
 import { Router, type IRouter } from "express";
 import { createReadStream } from "node:fs";
+import { pipeline } from "node:stream/promises";
 import { asc, count, eq } from "drizzle-orm";
 import {
   CheckSceneContentBody,
@@ -869,31 +870,36 @@ router.get("/studio/episodes/:id/video", async (req, res): Promise<void> => {
     res.status(400).json({ error: "Invalid episode ID" });
     return;
   }
-  const [episode] = await db
-    .select()
-    .from(studioEpisodesTable)
-    .where(eq(studioEpisodesTable.id, episodeId));
-  if (!episode) {
-    res.status(404).json({ error: "Episode not found" });
-    return;
-  }
-  const clips = await episodeVideoClipsQuery(episodeId);
+  const controller = new AbortController();
+  const abort = () => controller.abort();
+  const onClose = () => { if (!res.writableFinished) abort(); };
+  req.once("aborted", abort);
+  res.once("close", onClose);
+  if (req.aborted || res.destroyed) abort();
+  let directory: string | undefined;
   try {
-    const assembled = await assembleEpisodeVideo(clips.map(({ clip }) => clip));
+    const [episode] = await db
+      .select()
+      .from(studioEpisodesTable)
+      .where(eq(studioEpisodesTable.id, episodeId));
+    controller.signal.throwIfAborted();
+    if (!episode) {
+      res.status(404).json({ error: "Episode not found" });
+      return;
+    }
+    const clips = await episodeVideoClipsQuery(episodeId);
+    controller.signal.throwIfAborted();
+    const assembled = await assembleEpisodeVideo(clips.map(({ clip }) => clip), undefined, controller.signal);
+    directory = assembled.directory;
+    controller.signal.throwIfAborted();
     res.setHeader("Content-Type", "video/mp4");
     res.setHeader("Content-Disposition", `attachment; filename="episode-${episode.number}.mp4"`);
     res.setHeader("Cache-Control", "private, no-store");
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("X-Episode-Video-Report", Buffer.from(JSON.stringify(assembled.report)).toString("base64"));
-    const stream = createReadStream(assembled.outputPath);
-    stream.on("error", error => {
-      req.log.error({ err: error, episodeId }, "Episode video download failed");
-      if (!res.headersSent) res.status(500).json({ error: "The episode video could not be downloaded." });
-      else res.destroy(error);
-    });
-    stream.on("close", () => { void removeEpisodeVideo(assembled.directory); });
-    stream.pipe(res);
+    await pipeline(createReadStream(assembled.outputPath), res, { signal: controller.signal });
   } catch (error) {
+    if (controller.signal.aborted || res.destroyed) return;
     const message = error instanceof Error ? error.message : "Episode video assembly failed.";
     if (error instanceof EpisodeVideoUnavailableError) {
       res.status(422).json({
@@ -903,7 +909,12 @@ router.get("/studio/episodes/:id/video", async (req, res): Promise<void> => {
       return;
     }
     req.log.error({ err: error, episodeId }, "Episode video assembly failed");
-    res.status(502).json({ error: "The episode clips could not be assembled into an MP4." });
+    if (res.headersSent) res.destroy();
+    else res.status(502).json({ error: "The episode clips could not be assembled into an MP4." });
+  } finally {
+    req.off("aborted", abort);
+    res.off("close", onClose);
+    if (directory) await removeEpisodeVideo(directory);
   }
 });
 

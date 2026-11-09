@@ -1,23 +1,32 @@
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Download, LoaderCircle } from 'lucide-react';
 import type { Episode } from '@workspace/api-client-react';
 import { downloadEpisodeVideo, type EpisodeDownloadResult } from '../lib/episodeDownload';
 
 export function EpisodeDownload({ episode, hasClips }: { episode: Episode; hasClips: boolean }) {
-  const inFlight = useRef(false);
+  const inFlight = useRef<AbortController | null>(null);
   const [pending, setPending] = useState(false);
   const [result, setResult] = useState<EpisodeDownloadResult | null>(null);
 
+  useEffect(() => () => {
+    inFlight.current?.abort();
+    inFlight.current = null;
+  }, []);
+
   const download = async () => {
     if (inFlight.current) return;
-    inFlight.current = true;
+    const controller = new AbortController();
+    inFlight.current = controller;
     setPending(true);
     setResult(null);
     try {
-      setResult(await downloadEpisodeVideo(episode));
+      const outcome = await downloadEpisodeVideo(episode, controller.signal);
+      if (inFlight.current === controller) setResult(outcome);
     } finally {
-      inFlight.current = false;
-      setPending(false);
+      if (inFlight.current === controller) {
+        inFlight.current = null;
+        setPending(false);
+      }
     }
   };
 
@@ -30,6 +39,19 @@ export function EpisodeDownload({ episode, hasClips }: { episode: Episode; hasCl
         {pending ? <LoaderCircle size={14} className="animate-spin" /> : <Download size={14} />}
         {pending ? 'Assembling MP4…' : 'Download MP4'}
       </button>
+      {pending && (
+        <button type="button" className="btn btn-quiet"
+          data-testid={`button-cancel-episode-${episode.id}`}
+          aria-label={`Cancel episode ${episode.number} export`}
+          onClick={() => {
+            inFlight.current?.abort();
+            inFlight.current = null;
+            setPending(false);
+            setResult({ message: 'Export cancelled. You can try again.', skippedClips: [] });
+          }}>
+          Cancel export
+        </button>
+      )}
       <div role="status" aria-live="polite" data-testid={`status-episode-download-${episode.id}`}>
         <p className="row-caption" style={{ marginTop: 6 }}>
           {pending ? 'Assembling available clips in story order. This may take a few minutes.'

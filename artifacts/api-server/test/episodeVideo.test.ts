@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { after, afterEach, before, mock, test } from "node:test";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, readFile, readdir, rm, stat } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { EventEmitter } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Writable } from "node:stream";
@@ -232,24 +233,41 @@ test("the HTTP handler streams MP4/report headers and returns exact unavailable 
       return chain;
     },
   })) as typeof db.select);
-  mock.method(globalThis, "fetch", async () => videoResponse());
-  async function invoke() {
+  async function invoke(disconnect?: "fetch" | "stream" | "request") {
+    let warnings = 0;
+    let providerSignal: AbortSignal | null | undefined;
     const chunks: Buffer[] = [];
     const headers = new Map<string, string>();
     let json: unknown;
     let status = 200;
     const res = Object.assign(new Writable({
-      write(chunk, _encoding, callback) { chunks.push(Buffer.from(chunk)); callback(); },
+      write(chunk, _encoding, callback) {
+        chunks.push(Buffer.from(chunk));
+        if (disconnect === "stream") this.destroy();
+        callback();
+      },
     }), {
       setHeader(key: string, value: string) { headers.set(key, value); },
       status(code: number) { status = code; return this; },
       json(body: unknown) { json = body; },
     });
-    await handler({ params: { id: "1" }, log: { error() {} } }, res, () => {});
-    if (headers.has("Content-Type")) {
-      await new Promise<void>((resolve, reject) => { res.on("finish", resolve); res.on("error", reject); });
-    }
-    return { status, headers, json, bytes: Buffer.concat(chunks) };
+    const req = Object.assign(new EventEmitter(), {
+      params: { id: "1" }, log: { error() { warnings++; } },
+    });
+    mock.method(globalThis, "fetch", async (_input, init) => {
+      providerSignal = init?.signal;
+      if (disconnect === "fetch" || disconnect === "request") {
+        return new Promise<Response>((_resolve, reject) => {
+          providerSignal!.addEventListener("abort", () => reject(providerSignal!.reason), { once: true });
+          if (disconnect === "request") req.emit("aborted");
+          else res.destroy();
+        });
+      }
+      return videoResponse();
+    });
+    await handler(req, res, () => {});
+    assert.equal(req.listenerCount("aborted"), 0);
+    return { status, headers, json, bytes: Buffer.concat(chunks), warnings, providerSignal };
   }
   const ready = await invoke();
   assert.equal(ready.status, 200);
@@ -266,4 +284,108 @@ test("the HTTP handler streams MP4/report headers and returns exact unavailable 
   assert.match(JSON.stringify(unavailable.json), /safe public HTTPS/);
   assert.match(JSON.stringify(unavailable.json), /did not provide a downloadable/);
   assert.equal(unavailable.bytes.length, 0);
+  selectedClips = [clip(1)];
+  for (const stage of ["fetch", "stream", "request"] as const) {
+    const before = await episodeDirectories();
+    const cancelled = await invoke(stage);
+    assert.equal(cancelled.warnings, 0);
+    assert.equal(cancelled.json, undefined);
+    if (stage !== "stream") assert.equal(cancelled.providerSignal?.aborted, true);
+    assert.deepEqual(await episodeDirectories(), before);
+  }
+  assert.ok((await invoke()).bytes.length > 0);
 });
+
+const episodeDirectories = async () =>
+  (await readdir(tmpdir())).filter(name => name.startsWith("frame-faith-episode-")).sort();
+
+test("pre-cancelled assembly does not fetch or leave temporary files", async () => {
+  const before = await episodeDirectories();
+  const fetchMock = mock.method(globalThis, "fetch", async () => videoResponse());
+  const controller = new AbortController();
+  controller.abort();
+  await assert.rejects(assembleEpisodeVideo([clip(1)], undefined, controller.signal), { name: "AbortError" });
+  assert.equal(fetchMock.mock.callCount(), 0);
+  assert.deepEqual(await episodeDirectories(), before);
+});
+
+test("cancelling a pending provider request aborts fetch and does not try later clips", async () => {
+  const before = await episodeDirectories();
+  const controller = new AbortController();
+  const fetchMock = mock.method(globalThis, "fetch", async (_input, init) => {
+    assert.ok(init?.signal);
+    return new Promise<Response>((_resolve, reject) => {
+      init.signal!.addEventListener("abort", () => reject(init.signal!.reason), { once: true });
+      controller.abort();
+    });
+  });
+  await assert.rejects(assembleEpisodeVideo([clip(1), clip(2)], undefined, controller.signal), { name: "AbortError" });
+  assert.equal(fetchMock.mock.callCount(), 1);
+  assert.deepEqual(await episodeDirectories(), before);
+});
+
+test("cancelling a streaming provider body closes the download and removes partial files", async () => {
+  const before = await episodeDirectories();
+  const controller = new AbortController();
+  let cancelled = false;
+  mock.method(globalThis, "fetch", async () => new Response(new ReadableStream({
+    start(stream) {
+      stream.enqueue(new Uint8Array([1, 2, 3]));
+      setTimeout(() => controller.abort(), 20);
+    },
+    cancel() { cancelled = true; },
+  }), { headers: { "content-type": "video/mp4" } }));
+  await assert.rejects(assembleEpisodeVideo([clip(1)], undefined, controller.signal), { name: "AbortError" });
+  assert.equal(cancelled, true);
+  assert.deepEqual(await episodeDirectories(), before);
+});
+
+for (const stage of ["probe", "normalize", "concat"]) {
+  test(`cancelling during ${stage} kills the media process before deleting files and allows retry`, async () => {
+    const before = await episodeDirectories();
+    const bin = await mkdtemp(join(fixtures, "media-bin-"));
+    const marker = join(bin, "pid");
+    const realFfmpeg = execFileSync("which", ["ffmpeg"]).toString().trim();
+    const realFfprobe = execFileSync("which", ["ffprobe"]).toString().trim();
+    for (const tool of ["ffmpeg", "ffprobe"]) {
+      const shouldBlock = tool === "ffprobe" ? `[ "${stage}" = probe ]`
+        : stage === "concat" ? `case " $* " in *" concat "*) true;; *) false;; esac`
+          : `[ "${stage}" = normalize ]`;
+      const script = `#!/bin/sh
+if ${shouldBlock}; then
+  echo $$ > '${marker}'
+  exec sleep 60
+fi
+exec '${tool === "ffmpeg" ? realFfmpeg : realFfprobe}' "$@"
+`;
+      await writeFile(join(bin, tool), script);
+      await chmod(join(bin, tool), 0o755);
+    }
+    const oldPath = process.env.PATH;
+    process.env.PATH = `${bin}:${oldPath}`;
+    const controller = new AbortController();
+    mock.method(globalThis, "fetch", async () => videoResponse());
+    const work = assembleEpisodeVideo([clip(1)], undefined, controller.signal);
+    // Attach the rejection handler now, before triggering cancellation.
+    const rejection = assert.rejects(work, { name: "AbortError" });
+    try {
+      let pid: number | undefined;
+      for (let attempt = 0; attempt < 500; attempt++) {
+        try { pid = Number(await readFile(marker, "utf8")); if (pid) break; } catch {}
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      assert.ok(pid, `media process never reached ${stage}`);
+      controller.abort();
+      await rejection;
+      assert.throws(() => process.kill(pid!, 0), { code: "ESRCH" });
+      assert.deepEqual(await episodeDirectories(), before);
+    } finally {
+      controller.abort();
+      await rejection;
+      process.env.PATH = oldPath;
+    }
+    const retry = await assembleEpisodeVideo([clip(1)]);
+    await removeEpisodeVideo(retry.directory);
+    assert.deepEqual(await episodeDirectories(), before);
+  });
+}

@@ -19,9 +19,39 @@ const partial: EpisodeDownloadResult = {
 const button = () => screen.getByRole('button', { name: 'Download episode 3 MP4' });
 const status = () => screen.getByTestId(`status-episode-download-${episode.id}`);
 
-beforeEach(() => download.mockReset());
+beforeEach(() => { download.mockReset(); });
 
 describe('EpisodeDownload controls', () => {
+  it('cancels immediately, allows retry, and ignores a stale completion', async () => {
+    let finish!: (result: EpisodeDownloadResult) => void;
+    let retryFinish!: (result: EpisodeDownloadResult) => void;
+    download.mockReturnValueOnce(new Promise(resolve => { finish = resolve; }))
+      .mockReturnValueOnce(new Promise(resolve => { retryFinish = resolve; }));
+    render(<EpisodeDownload episode={episode} hasClips />);
+    fireEvent.click(button());
+    const signal = download.mock.calls[0][1]!;
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel episode 3 export' }));
+    expect(signal.aborted).toBe(true);
+    expect(button()).toBeEnabled();
+    expect(status()).toHaveTextContent('Export cancelled. You can try again.');
+    fireEvent.click(button());
+    await act(async () => finish({ failed: true, message: 'Old failure', skippedClips: [] }));
+    expect(button()).toBeDisabled();
+    expect(status()).not.toHaveTextContent('Old failure');
+    await act(async () => retryFinish(success));
+    expect(status()).toHaveTextContent(success.message);
+    expect(button()).toBeEnabled();
+  });
+
+  it('aborts an export when its controls unmount', () => {
+    download.mockReturnValue(new Promise(() => {}));
+    const { unmount } = render(<EpisodeDownload episode={episode} hasClips />);
+    fireEvent.click(button());
+    const signal = download.mock.calls[0][1]!;
+    unmount();
+    expect(signal.aborted).toBe(true);
+  });
+
   it('disables unavailable downloads and explains how to make them available', () => {
     render(<EpisodeDownload episode={episode} hasClips={false} />);
     expect(button()).toBeDisabled();
@@ -40,7 +70,7 @@ describe('EpisodeDownload controls', () => {
       button().dispatchEvent(new MouseEvent('click', { bubbles: true }));
       button().dispatchEvent(new MouseEvent('click', { bubbles: true }));
     });
-    expect(download).toHaveBeenCalledExactlyOnceWith(episode);
+    expect(download).toHaveBeenCalledExactlyOnceWith(episode, expect.any(AbortSignal));
     expect(button()).toBeDisabled();
     expect(button()).toHaveTextContent('Assembling MP4…');
     expect(status()).toHaveTextContent('Assembling available clips in story order');
@@ -91,7 +121,7 @@ describe('EpisodeDownload controls', () => {
     expect(screen.queryByTestId(`list-episode-skipped-clips-${episode.id}`)).not.toBeInTheDocument();
     expect(await screen.findByText(success.message)).toBeVisible();
     expect(download).toHaveBeenCalledTimes(2);
-    expect(download).toHaveBeenNthCalledWith(2, episode);
+    expect(download).toHaveBeenNthCalledWith(2, episode, expect.any(AbortSignal));
     expect(button()).toBeEnabled();
     expect(status()).not.toHaveTextContent(message);
   });
@@ -106,7 +136,7 @@ describe('EpisodeDownload controls', () => {
     expect(otherButton).toBeEnabled();
     fireEvent.click(otherButton);
     await screen.findByText(success.message);
-    expect(download).toHaveBeenNthCalledWith(2, otherEpisode);
+    expect(download).toHaveBeenNthCalledWith(2, otherEpisode, expect.any(AbortSignal));
     expect(button()).toBeDisabled();
     expect(status()).not.toHaveTextContent(success.message);
     await act(async () => finish(partial));

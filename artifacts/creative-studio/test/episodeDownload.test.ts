@@ -54,7 +54,7 @@ test('downloads only the selected episode MP4, with credentials and a safe filen
     return mp4();
   });
   const result = await downloadEpisodeVideo(episode);
-  assert.deepEqual(requests, [['/api/studio/episodes/42/video', { credentials: 'include' }]]);
+  assert.deepEqual(requests, [['/api/studio/episodes/42/video', { credentials: 'include', signal: undefined }]]);
   assert.equal(env.anchors[0].download, 'E03-Hope - lumière.mp4');
   assert.equal(env.anchors[0].href, 'blob:episode');
   assert.equal(env.clicks(), 1);
@@ -72,6 +72,38 @@ test('partial success preserves the server skip reasons including Unicode', asyn
   assert.equal(env.clicks(), 1);
   assert.match(result.message, /1 clip\(s\) skipped/);
   assert.deepEqual(result.skippedClips, skipped);
+});
+
+test('cancellation aborts the request without failure or a saved file and allows retry', async () => {
+  const env = browser();
+  const controller = new AbortController();
+  mock.method(globalThis, 'fetch', async (_url, init) => {
+    assert.equal(init?.signal, controller.signal);
+    controller.abort();
+    throw controller.signal.reason;
+  });
+  const result = await downloadEpisodeVideo(episode, controller.signal);
+  assert.equal(result.failed, undefined);
+  assert.match(result.message, /cancelled/);
+  assert.equal(env.clicks(), 0);
+  mock.method(globalThis, 'fetch', async () => mp4());
+  assert.match((await downloadEpisodeVideo(episode, new AbortController().signal)).message, /download started/);
+  assert.equal(env.clicks(), 1);
+});
+
+test('cancellation while reading the response body prevents saving', async () => {
+  const env = browser();
+  const controller = new AbortController();
+  mock.method(globalThis, 'fetch', async () => {
+    const response = mp4();
+    mock.method(response, 'blob', async () => {
+      controller.abort();
+      return new Blob(['video'], { type: 'video/mp4' });
+    });
+    return response;
+  });
+  assert.match((await downloadEpisodeVideo(episode, controller.signal)).message, /cancelled/);
+  assert.equal(env.clicks(), 0);
 });
 
 test('unavailable episodes show the explanation and skipped clips without saving a file', async () => {

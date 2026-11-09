@@ -17,13 +17,17 @@ function readIssues(value: unknown): EpisodeVideoIssue[] {
 // Uses only the single-episode endpoint: no ZIP, reference images, or other episodes.
 export async function downloadEpisodeVideo(
   episode: { id: number; number: number; title: string },
+  signal?: AbortSignal,
 ): Promise<EpisodeDownloadResult> {
   try {
+    signal?.throwIfAborted();
     const response = await fetch(`/api/studio/episodes/${episode.id}/video`, {
       credentials: 'include',
+      signal,
     });
     if (!response.ok) {
       const failure = await response.json().catch(() => ({}));
+      signal?.throwIfAborted();
       return {
         failed: true,
         message: response.status === 401
@@ -38,6 +42,7 @@ export async function downloadEpisodeVideo(
       throw new Error('The episode service did not return an MP4. Try again.');
     }
     const blob = await response.blob();
+    signal?.throwIfAborted();
     if (!blob.size) throw new Error('The episode export returned an empty video. Try again.');
     let skippedClips: EpisodeVideoIssue[] = [];
     let reportUnavailable = false;
@@ -71,6 +76,9 @@ export async function downloadEpisodeVideo(
       skippedClips,
     };
   } catch (error) {
+    if (signal?.aborted) {
+      return { message: 'Export cancelled. You can try again.', skippedClips: [] };
+    }
     return {
       failed: true,
       message: error instanceof TypeError
