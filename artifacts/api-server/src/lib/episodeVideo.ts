@@ -13,6 +13,19 @@ const MAX_REDIRECTS = 3;
 const CLIP_TIMEOUT_MS = 30_000;
 const FFMPEG_TIMEOUT_MS = 3 * 60_000;
 
+export class EpisodeVideoUnavailableError extends Error {
+  constructor(public readonly report: EpisodeVideoReport) {
+    super("No downloadable, playable clips are available for this episode.");
+    this.name = "EpisodeVideoUnavailableError";
+  }
+}
+
+type EpisodeVideoLimits = { sourceBytes: number; clipBytes: number };
+const DEFAULT_LIMITS: EpisodeVideoLimits = {
+  sourceBytes: MAX_SOURCE_BYTES,
+  clipBytes: MAX_CLIP_BYTES,
+};
+
 export type EpisodeVideoClip = {
   id: number;
   provider: string;
@@ -71,7 +84,7 @@ function validateClipUrl(value: string): URL {
   return url;
 }
 
-async function fetchClip(urlValue: string, outputPath: string, remainingBytes: number): Promise<number> {
+async function fetchClip(urlValue: string, outputPath: string, allowedBytes: number): Promise<number> {
   let url = validateClipUrl(urlValue);
   let response: Response | undefined;
   for (let redirect = 0; redirect <= MAX_REDIRECTS; redirect++) {
@@ -80,6 +93,7 @@ async function fetchClip(urlValue: string, outputPath: string, remainingBytes: n
       signal: AbortSignal.timeout(CLIP_TIMEOUT_MS),
     });
     if (response.status < 300 || response.status >= 400) break;
+    await response.body?.cancel();
     const location = response.headers.get("location");
     if (!location || redirect === MAX_REDIRECTS) {
       throw new Error("The provider video could not be downloaded.");
@@ -87,15 +101,17 @@ async function fetchClip(urlValue: string, outputPath: string, remainingBytes: n
     url = validateClipUrl(new URL(location, url).toString());
   }
   if (!response?.ok || !response.body) {
+    await response?.body?.cancel();
     throw new Error("The provider video could not be downloaded.");
   }
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
   if (contentType && !contentType.startsWith("video/") && !contentType.includes("octet-stream")) {
+    await response.body.cancel();
     throw new Error("The provider URL did not return a video file.");
   }
   const contentLength = Number(response.headers.get("content-length") ?? 0);
-  const allowedBytes = Math.min(MAX_CLIP_BYTES, remainingBytes);
   if (contentLength > allowedBytes) {
+    await response.body.cancel();
     throw new Error("The episode video size limit was reached.");
   }
 
@@ -166,6 +182,7 @@ async function normalizeClip(inputPath: string, outputPath: string): Promise<voi
 
 export async function assembleEpisodeVideo(
   clips: EpisodeVideoClip[],
+  limits: EpisodeVideoLimits = DEFAULT_LIMITS,
 ): Promise<AssembledEpisodeVideo> {
   const directory = await mkdtemp(join(tmpdir(), "frame-faith-episode-"));
   const report: EpisodeVideoReport = { usedClipIds: [], skippedClips: [] };
@@ -189,7 +206,7 @@ export async function assembleEpisodeVideo(
         });
         continue;
       }
-      if (sourceBytes >= MAX_SOURCE_BYTES) {
+      if (sourceBytes >= limits.sourceBytes) {
         report.skippedClips.push({
           clipId: clip.id,
           provider: clip.provider,
@@ -202,7 +219,7 @@ export async function assembleEpisodeVideo(
       const sourcePath = join(directory, `source-${sequence}`);
       const normalizedPath = join(directory, `segment-${sequence}.mp4`);
       try {
-        sourceBytes += await fetchClip(clip.url, sourcePath, MAX_SOURCE_BYTES - sourceBytes);
+        sourceBytes += await fetchClip(clip.url, sourcePath, Math.min(limits.clipBytes, limits.sourceBytes - sourceBytes));
         await normalizeClip(sourcePath, normalizedPath);
         normalizedFiles.push(normalizedPath);
         report.usedClipIds.push(clip.id);
@@ -214,7 +231,10 @@ export async function assembleEpisodeVideo(
           provider: clip.provider,
           reason: error instanceof Error && error.message.includes("size limit")
             ? "The episode video size limit was reached."
-            : error instanceof Error && error.message.includes("safe public HTTPS")
+            : error instanceof Error && (
+              error.message.startsWith("The provider") ||
+              error.message.includes("safe public HTTPS")
+            )
               ? error.message
               : "The provider-hosted clip could not be downloaded or decoded for episode assembly.",
         });
@@ -222,7 +242,7 @@ export async function assembleEpisodeVideo(
     }
 
     if (!normalizedFiles.length) {
-      throw new Error("No downloadable, playable clips are available for this episode.");
+      throw new EpisodeVideoUnavailableError(report);
     }
 
     const concatList = normalizedFiles.map(path => `file '${path}'`).join("\n");

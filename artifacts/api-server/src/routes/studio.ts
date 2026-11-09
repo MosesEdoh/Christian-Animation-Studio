@@ -53,7 +53,8 @@ import {
 import { generateGeminiJson, generateGeminiText } from "../lib/ai";
 import { submitVideoGeneration } from "../lib/video-provider";
 import { ObjectStorageService } from "../lib/objectStorage";
-import { assembleEpisodeVideo, removeEpisodeVideo } from "../lib/episodeVideo";
+import { assembleEpisodeVideo, removeEpisodeVideo, EpisodeVideoUnavailableError } from "../lib/episodeVideo";
+import { episodeVideoClipsQuery } from "../lib/episodeVideoClips";
 
 const router: IRouter = Router();
 
@@ -876,13 +877,7 @@ router.get("/studio/episodes/:id/video", async (req, res): Promise<void> => {
     res.status(404).json({ error: "Episode not found" });
     return;
   }
-  const clips = await db
-    .select({ clip: studioClipsTable })
-    .from(studioClipsTable)
-    .innerJoin(studioShotsTable, eq(studioClipsTable.shotId, studioShotsTable.id))
-    .innerJoin(studioScenesTable, eq(studioShotsTable.sceneId, studioScenesTable.id))
-    .where(eq(studioScenesTable.episodeId, episodeId))
-    .orderBy(asc(studioScenesTable.number), asc(studioShotsTable.number), asc(studioClipsTable.createdAt));
+  const clips = await episodeVideoClipsQuery(episodeId);
   try {
     const assembled = await assembleEpisodeVideo(clips.map(({ clip }) => clip));
     res.setHeader("Content-Type", "video/mp4");
@@ -900,19 +895,10 @@ router.get("/studio/episodes/:id/video", async (req, res): Promise<void> => {
     stream.pipe(res);
   } catch (error) {
     const message = error instanceof Error ? error.message : "Episode video assembly failed.";
-    if (message.startsWith("No downloadable")) {
+    if (error instanceof EpisodeVideoUnavailableError) {
       res.status(422).json({
         error: message,
-        usedClipIds: [],
-        skippedClips: clips.map(({ clip }) => ({
-          clipId: clip.id,
-          provider: clip.provider,
-          reason: clip.status !== "ready"
-            ? `Clip is ${clip.status}, not ready for export.`
-            : clip.url
-              ? "The provider-hosted clip could not be downloaded or decoded for episode assembly."
-              : "The provider did not provide a downloadable video URL.",
-        })),
+        ...error.report,
       });
       return;
     }
