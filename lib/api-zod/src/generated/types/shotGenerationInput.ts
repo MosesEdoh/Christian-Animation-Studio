@@ -5,12 +5,27 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+import type { ShotGenerationInputAspectRatio } from './shotGenerationInputAspectRatio';
+import type { ShotGenerationInputProvider } from './shotGenerationInputProvider';
+import type { ShotGenerationInputResolution } from './shotGenerationInputResolution';
 
 export interface ShotGenerationInput {
+  /** @minimum 1 */
   shotId: number;
+  /**
+     * @minLength 1
+     * @maxLength 3000
+     */
   prompt: string;
   /** @nullable */
   referenceImageUrl?: string | null;
-  /** @nullable */
-  provider?: string | null;
+  referenceSafetyConfirmed?: boolean;
+  provider?: ShotGenerationInputProvider;
+  aspectRatio?: ShotGenerationInputAspectRatio;
+  resolution?: ShotGenerationInputResolution;
+  /**
+     * @minimum 3
+     * @maximum 15
+     */
+  durationSeconds?: number;
 }

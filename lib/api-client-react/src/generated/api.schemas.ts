@@ -466,13 +466,48 @@ export interface FaithQuestionStory {
   safetyNote: string;
 }
 
+export type ShotGenerationInputProvider = typeof ShotGenerationInputProvider[keyof typeof ShotGenerationInputProvider];
+
+
+export const ShotGenerationInputProvider = {
+  'google-omni': 'google-omni',
+} as const;
+
+export type ShotGenerationInputAspectRatio = typeof ShotGenerationInputAspectRatio[keyof typeof ShotGenerationInputAspectRatio];
+
+
+export const ShotGenerationInputAspectRatio = {
+  '16:9': '16:9',
+  '9:16': '9:16',
+} as const;
+
+export type ShotGenerationInputResolution = typeof ShotGenerationInputResolution[keyof typeof ShotGenerationInputResolution];
+
+
+export const ShotGenerationInputResolution = {
+  '720p': '720p',
+  '1080p': '1080p',
+} as const;
+
 export interface ShotGenerationInput {
+  /** @minimum 1 */
   shotId: number;
+  /**
+     * @minLength 1
+     * @maxLength 3000
+     */
   prompt: string;
   /** @nullable */
   referenceImageUrl?: string | null;
-  /** @nullable */
-  provider?: string | null;
+  referenceSafetyConfirmed?: boolean;
+  provider?: ShotGenerationInputProvider;
+  aspectRatio?: ShotGenerationInputAspectRatio;
+  resolution?: ShotGenerationInputResolution;
+  /**
+     * @minimum 3
+     * @maximum 15
+     */
+  durationSeconds?: number;
 }
 
 export type ListStudioExportsParams = {

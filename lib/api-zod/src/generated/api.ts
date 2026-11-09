@@ -649,11 +649,28 @@ export const GenerateFaithQuestionStoryResponse = zod.object({
 /**
  * @summary Submit a shot to the configured video provider
  */
+
+export const generateShotClipBodyPromptMax = 3000;
+
+export const generateShotClipBodyReferenceSafetyConfirmedDefault = false;
+export const generateShotClipBodyProviderDefault = `google-omni`;
+export const generateShotClipBodyAspectRatioDefault = `16:9`;
+export const generateShotClipBodyResolutionDefault = `720p`;
+export const generateShotClipBodyDurationSecondsDefault = 5;
+export const generateShotClipBodyDurationSecondsMin = 3;
+export const generateShotClipBodyDurationSecondsMax = 15;
+
+
+
 export const GenerateShotClipBody = zod.object({
-  "shotId": zod.int(),
-  "prompt": zod.string(),
+  "shotId": zod.int().min(1),
+  "prompt": zod.string().min(1).max(generateShotClipBodyPromptMax),
   "referenceImageUrl": zod.string().nullish(),
-  "provider": zod.string().nullish()
+  "referenceSafetyConfirmed": zod.boolean().default(generateShotClipBodyReferenceSafetyConfirmedDefault),
+  "provider": zod.enum(['google-omni']).default(generateShotClipBodyProviderDefault),
+  "aspectRatio": zod.enum(['16:9', '9:16']).default(generateShotClipBodyAspectRatioDefault),
+  "resolution": zod.enum(['720p', '1080p']).default(generateShotClipBodyResolutionDefault),
+  "durationSeconds": zod.int().min(generateShotClipBodyDurationSecondsMin).max(generateShotClipBodyDurationSecondsMax).default(generateShotClipBodyDurationSecondsDefault)
 })
 
 export const GenerateShotClipResponse = zod.object({

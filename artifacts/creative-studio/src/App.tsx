@@ -169,7 +169,10 @@ function StudioWorkspace({ authUser }: { authUser: AuthUser }) {
   const [directorBeat, setDirectorBeat] = useState('');
   const [shotBeat, setShotBeat] = useState('');
   const [shotPrompt, setShotPrompt] = useState('');
-  const [provider, setProvider] = useState('configured');
+  const [videoAspectRatio, setVideoAspectRatio] = useState<'16:9' | '9:16'>('16:9');
+  const [videoResolution, setVideoResolution] = useState<'720p' | '1080p'>('720p');
+  const [videoDurationSeconds, setVideoDurationSeconds] = useState(5);
+  const [referenceSafetyConfirmed, setReferenceSafetyConfirmed] = useState(false);
   const [directorNotes, setDirectorNotes] = useState('');
   const [shotSuggestions, setShotSuggestions] = useState<
     Array<{ shotType: string; movement: string; angle: string; rationale: string; duration: string }>
@@ -252,6 +255,10 @@ function StudioWorkspace({ authUser }: { authUser: AuthUser }) {
     () => clips.filter((clip) => !activeShot || clip.shotId === activeShot.id),
     [activeShot, clips],
   );
+
+  useEffect(() => {
+    setReferenceSafetyConfirmed(false);
+  }, [activeShot?.id, activeShot?.referenceImageUrl]);
 
   useEffect(() => {
     if (project) {
@@ -735,17 +742,21 @@ function StudioWorkspace({ authUser }: { authUser: AuthUser }) {
       {
         data: {
           shotId: activeShot.id,
-          prompt: shotPrompt,
-          referenceImageUrl: activeShot.referenceImageUrl,
-          provider,
+          prompt: shotPrompt.trim() || activeShot.description,
+          referenceImageUrl: referenceSafetyConfirmed ? activeShot.referenceImageUrl : null,
+          referenceSafetyConfirmed,
+          provider: 'google-omni',
+          aspectRatio: videoAspectRatio,
+          resolution: videoResolution,
+          durationSeconds: videoDurationSeconds,
         },
       },
       {
         onSuccess: (clip) => {
           patchBootstrap((current) => ({ ...current, clips: [clip, ...current.clips] }));
-          notify('Clip queued with the animation desk.');
+          notify('Your Google video clip is ready to preview and download.');
         },
-        onError: () => notify('The animation desk could not queue this clip.', 'error'),
+        onError: (error) => notify(error instanceof Error ? error.message : 'Google could not generate this clip.', 'error'),
       },
     );
   };
@@ -847,8 +858,14 @@ function StudioWorkspace({ authUser }: { authUser: AuthUser }) {
             setSelectedShotId={setSelectedShotId}
             shotPrompt={shotPrompt}
             setShotPrompt={setShotPrompt}
-            provider={provider}
-            setProvider={setProvider}
+            videoAspectRatio={videoAspectRatio}
+            setVideoAspectRatio={setVideoAspectRatio}
+            videoResolution={videoResolution}
+            setVideoResolution={setVideoResolution}
+            videoDurationSeconds={videoDurationSeconds}
+            setVideoDurationSeconds={setVideoDurationSeconds}
+            referenceSafetyConfirmed={referenceSafetyConfirmed}
+            setReferenceSafetyConfirmed={setReferenceSafetyConfirmed}
             clips={activeClips}
             runClipGeneration={runClipGeneration}
             pending={generateClip.isPending}
@@ -1675,8 +1692,14 @@ function AnimationView({
   setSelectedShotId,
   shotPrompt,
   setShotPrompt,
-  provider,
-  setProvider,
+  videoAspectRatio,
+  setVideoAspectRatio,
+  videoResolution,
+  setVideoResolution,
+  videoDurationSeconds,
+  setVideoDurationSeconds,
+  referenceSafetyConfirmed,
+  setReferenceSafetyConfirmed,
   clips,
   runClipGeneration,
   pending,
@@ -1687,8 +1710,14 @@ function AnimationView({
   setSelectedShotId: (id: number) => void;
   shotPrompt: string;
   setShotPrompt: (value: string) => void;
-  provider: string;
-  setProvider: (value: string) => void;
+  videoAspectRatio: '16:9' | '9:16';
+  setVideoAspectRatio: (value: '16:9' | '9:16') => void;
+  videoResolution: '720p' | '1080p';
+  setVideoResolution: (value: '720p' | '1080p') => void;
+  videoDurationSeconds: number;
+  setVideoDurationSeconds: (value: number) => void;
+  referenceSafetyConfirmed: boolean;
+  setReferenceSafetyConfirmed: (value: boolean) => void;
   clips: Clip[];
   runClipGeneration: () => void;
   pending: boolean;
@@ -1705,8 +1734,46 @@ function AnimationView({
           <div className="field"><label htmlFor="shot-picker">Shot to animate</label><select id="shot-picker" value={selectedShotId ?? ''} onChange={(event) => setSelectedShotId(Number(event.target.value))} data-testid="select-animation-shot">{shots.map((shot) => <option value={shot.id} key={shot.id}>Shot {String(shot.number).padStart(2, '0')} · {shot.description}</option>)}</select></div>
           <div className="insight-box" style={{ marginTop: 18 }}><h3>Frame intention</h3><p>{activeShot?.beat ?? 'Choose a shot to see its intention.'}</p></div>
           <div className="field" style={{ marginTop: 18 }}><label htmlFor="animation-prompt">Motion prompt</label><textarea id="animation-prompt" value={shotPrompt} onChange={(event) => setShotPrompt(event.target.value)} data-testid="input-animation-prompt" placeholder="Describe the movement, texture, and restraint." /></div>
-          <div className="form-grid" style={{ marginTop: 15 }}><div className="field full"><label htmlFor="provider-picker">Video renderer</label><select id="provider-picker" value={provider} onChange={(event) => setProvider(event.target.value)} data-testid="select-animation-provider"><option value="configured">Configured external renderer</option></select><span className="row-caption">New AI clips require a configured video provider. No mock files are created. To watch the complete saved story now, build a storyboard MP4 from the dashboard.</span></div></div>
-          <button type="button" className="btn btn-primary" style={{ marginTop: 15 }} data-testid="button-generate-clip" onClick={runClipGeneration} disabled={pending || !activeShot}><Play size={14} /> {pending ? 'Queuing clip…' : 'Queue animation clip'}</button>
+          <div className="form-grid" style={{ marginTop: 15 }}>
+            <div className="field">
+              <label htmlFor="video-orientation">Orientation</label>
+              <select id="video-orientation" value={videoAspectRatio} onChange={(event) => setVideoAspectRatio(event.target.value as '16:9' | '9:16')} data-testid="select-video-orientation">
+                <option value="16:9">Landscape · 16:9</option><option value="9:16">Portrait · 9:16</option>
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="video-resolution">Resolution</label>
+              <select id="video-resolution" value={videoResolution} onChange={(event) => setVideoResolution(event.target.value as '720p' | '1080p')} data-testid="select-video-resolution">
+                <option value="720p">720p</option><option value="1080p">1080p</option>
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="video-duration">Clip length</label>
+              <select id="video-duration" value={videoDurationSeconds} onChange={(event) => setVideoDurationSeconds(Number(event.target.value))} data-testid="select-video-duration">
+                {[3, 5, 8, 10, 15].map((seconds) => <option value={seconds} key={seconds}>{seconds} seconds</option>)}
+              </select>
+            </div>
+          </div>
+          <div className="field full" style={{ marginTop: 15 }}>
+            <label>Video provider</label>
+            <div className="insight-box"><h3>Google Gemini Omni</h3><p>Creates a real MP4 clip from your prompt, shot, and optional saved reference. Generation uses the studio’s Google API quota.</p></div>
+          </div>
+          {activeShot?.referenceImageUrl ? (
+            <div className="field full" style={{ marginTop: 15 }}>
+              <label htmlFor="reference-safety-confirmation" style={{ display: 'flex', gap: 9, alignItems: 'flex-start' }}>
+                <input
+                  id="reference-safety-confirmation"
+                  type="checkbox"
+                  checked={referenceSafetyConfirmed}
+                  onChange={(event) => setReferenceSafetyConfirmed(event.target.checked)}
+                  data-testid="checkbox-video-reference-safety"
+                />
+                <span>Use this saved storyboard reference. I have permission to send it to Google, and it does not depict a child or minor.</span>
+              </label>
+              <p className="row-caption">Google’s current image-reference policy restricts images containing minors in the EEA, UK, and Switzerland. Leave this unchecked to generate from text only.</p>
+            </div>
+          ) : null}
+          <button type="button" className="btn btn-primary" style={{ marginTop: 15 }} data-testid="button-generate-clip" onClick={runClipGeneration} disabled={pending || !activeShot}><Play size={14} /> {pending ? 'Generating video…' : 'Generate video clip'}</button>
         </section>
         <section className="panel pad" data-testid="panel-clip-queue">
           <div className="section-heading"><div><h2>Clip queue</h2><p>Generated motion stays attached to the shot.</p></div><Scissors size={17} color="var(--coral)" /></div>

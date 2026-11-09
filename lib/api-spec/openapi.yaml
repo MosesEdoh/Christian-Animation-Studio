@@ -922,8 +922,25 @@ components:
       type: object
       required: [shotId, prompt]
       properties:
-        shotId: { type: integer }
-        prompt: { type: string }
+        shotId: { type: integer, minimum: 1 }
+        prompt: { type: string, minLength: 1, maxLength: 3000 }
         referenceImageUrl: { type: ["string", "null"] }
-        provider: { type: ["string", "null"] }
+        referenceSafetyConfirmed: { type: boolean, default: false }
+        provider:
+          type: string
+          enum: [google-omni]
+          default: google-omni
+        aspectRatio:
+          type: string
+          enum: ["16:9", "9:16"]
+          default: "16:9"
+        resolution:
+          type: string
+          enum: [720p, 1080p]
+          default: 720p
+        durationSeconds:
+          type: integer
+          minimum: 3
+          maximum: 15
+          default: 5
 

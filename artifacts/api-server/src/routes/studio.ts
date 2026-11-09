@@ -53,7 +53,11 @@ import {
   studioAssetsTable,
 } from "@workspace/db";
 import { generateGeminiJson, generateGeminiText } from "../lib/ai";
-import { submitVideoGeneration } from "../lib/video-provider";
+import {
+  submitVideoGeneration,
+  VideoGenerationProviderError,
+  type VideoReferenceImage,
+} from "../lib/video-provider";
 import { ObjectStorageService } from "../lib/objectStorage";
 import {
   assembleEpisodeVideo, removeEpisodeVideo, EpisodeVideoUnavailableError,
@@ -986,16 +990,79 @@ Keep the response non-graphic, non-shaming, and non-coercive. Do not request ide
   }
 });
 
+async function loadVideoReferenceImage(objectUrl: string): Promise<VideoReferenceImage> {
+  const objectPath = objectUrl.startsWith("/objects/")
+    ? objectUrl
+    : objectUrl.startsWith("/api/storage/objects/")
+      ? objectUrl.slice("/api/storage".length)
+      : null;
+  if (!objectPath) {
+    throw new VideoGenerationProviderError("The selected reference is not a saved studio image.", 400);
+  }
+  const file = await new ObjectStorageService().getObjectEntityFile(objectPath);
+  const [metadata] = await file.getMetadata();
+  const mimeType = metadata.contentType?.toLowerCase();
+  if (!["image/jpeg", "image/png", "image/webp"].includes(mimeType ?? "")) {
+    throw new VideoGenerationProviderError("Use a saved JPEG, PNG, or WebP image as the video reference.", 400);
+  }
+  if (Number(metadata.size ?? 0) > 10 * 1024 * 1024) {
+    throw new VideoGenerationProviderError("The selected reference image must be 10 MB or smaller.", 400);
+  }
+  const [bytes] = await file.download();
+  return {
+    mimeType: mimeType as VideoReferenceImage["mimeType"],
+    data: bytes.toString("base64"),
+  };
+}
+
 router.post("/studio/generation/shots", async (req, res): Promise<void> => {
   const parsed = GenerateShotClipBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
     return;
   }
+  const provider = parsed.data.provider ?? "google-omni";
+  if (provider !== "google-omni") {
+    res.status(400).json({ error: "Choose the Google Gemini Omni video provider." });
+    return;
+  }
+
+  const [shot] = await db
+    .select({ id: studioShotsTable.id, referenceImageUrl: studioShotsTable.referenceImageUrl })
+    .from(studioShotsTable)
+    .where(eq(studioShotsTable.id, parsed.data.shotId))
+    .limit(1);
+  if (!shot) {
+    res.status(404).json({ error: "The selected storyboard shot could not be found." });
+    return;
+  }
+
+  const referenceImageUrl = parsed.data.referenceImageUrl ?? null;
+  if (referenceImageUrl && !parsed.data.referenceSafetyConfirmed) {
+    res.status(400).json({
+      error: "Confirm the selected reference is authorized for AI processing and does not depict a child or minor.",
+    });
+    return;
+  }
+  if (referenceImageUrl && referenceImageUrl !== shot.referenceImageUrl) {
+    res.status(400).json({ error: "Use the reference image saved on this storyboard shot." });
+    return;
+  }
+
+  const abortController = new AbortController();
+  const abortIfDisconnected = () => {
+    if (!res.writableEnded) abortController.abort();
+  };
+  req.once("aborted", abortIfDisconnected);
+  res.once("close", abortIfDisconnected);
   try {
     const generated = await submitVideoGeneration({
-      prompt: parsed.data.prompt,
-      referenceImageUrl: parsed.data.referenceImageUrl,
+      prompt: parsed.data.prompt.trim(),
+      referenceImage: referenceImageUrl ? await loadVideoReferenceImage(referenceImageUrl) : undefined,
+      aspectRatio: parsed.data.aspectRatio ?? "16:9",
+      resolution: parsed.data.resolution ?? "720p",
+      durationSeconds: parsed.data.durationSeconds ?? 5,
+      signal: abortController.signal,
     });
     const [clip] = await db
       .insert(studioClipsTable)
@@ -1010,8 +1077,22 @@ router.post("/studio/generation/shots", async (req, res): Promise<void> => {
       .returning();
     res.status(202).json(GenerateShotClipResponse.parse(clip));
   } catch (error) {
-    req.log.error({ err: error }, "Shot clip generation failed");
-    res.status(502).json({ error: "No real video was produced. Configure a real video provider, or build a storyboard movie from the dashboard." });
+    if (abortController.signal.aborted) return;
+    req.log.error({
+      err: error,
+      provider,
+      shotId: parsed.data.shotId,
+      aspectRatio: parsed.data.aspectRatio ?? "16:9",
+      resolution: parsed.data.resolution ?? "720p",
+    }, "Shot clip generation failed");
+    if (error instanceof VideoGenerationProviderError) {
+      res.status(error.statusCode).json({ error: error.message });
+    } else {
+      res.status(502).json({ error: "Google could not produce a playable video. Try again later." });
+    }
+  } finally {
+    req.off("aborted", abortIfDisconnected);
+    res.off("close", abortIfDisconnected);
   }
 });
 

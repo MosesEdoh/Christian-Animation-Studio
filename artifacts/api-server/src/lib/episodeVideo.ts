@@ -9,6 +9,7 @@ import { episodeExportAdmission, type EpisodeExportLease } from "./episodeExport
 import { EpisodeTemporaryStorage } from "./episodeTemporaryStorage";
 import { EPISODE_EXPORT_LIFETIME_MS } from "./episodeExportTiming";
 import { logger } from "./logger";
+import { ObjectStorageService } from "./objectStorage";
 export { EPISODE_EXPORT_LIFETIME_MS } from "./episodeExportTiming";
 export {
   EpisodeVideoBusyError, MAX_CONCURRENT_EPISODE_EXPORTS, EPISODE_EXPORT_RETRY_SECONDS,
@@ -121,6 +122,21 @@ async function fetchClip(urlValue: string, outputPath: string, allowedBytes: num
     AbortSignal.timeout(CLIP_TIMEOUT_MS),
     ...(signal ? [signal] : []),
   ]);
+  const privateExport = /^\/api\/storage\/objects\/(exports\/[a-f0-9-]+\.mp4)$/i.exec(urlValue);
+  if (privateExport) {
+    const file = await new ObjectStorageService().getObjectEntityFile(`/objects/${privateExport[1]}`);
+    const [metadata] = await file.getMetadata();
+    const contentType = metadata.contentType?.toLowerCase() ?? "";
+    const contentLength = Number(metadata.size ?? 0);
+    if (contentType && !contentType.startsWith("video/") && !contentType.includes("octet-stream")) {
+      throw new Error("The saved clip is not a video file.");
+    }
+    if (contentLength > allowedBytes) {
+      throw new Error("The episode video size limit was reached.");
+    }
+    return writeVideoStream(file.createReadStream(), outputPath, allowedBytes, downloadSignal);
+  }
+
   let url = validateClipUrl(urlValue);
   let response: Response | undefined;
   for (let redirect = 0; redirect <= MAX_REDIRECTS; redirect++) {
@@ -151,6 +167,20 @@ async function fetchClip(urlValue: string, outputPath: string, allowedBytes: num
     throw new Error("The episode video size limit was reached.");
   }
 
+  return writeVideoStream(
+    Readable.fromWeb(response.body as import("node:stream/web").ReadableStream<Uint8Array>),
+    outputPath,
+    allowedBytes,
+    downloadSignal,
+  );
+}
+
+async function writeVideoStream(
+  source: Readable,
+  outputPath: string,
+  allowedBytes: number,
+  signal: AbortSignal,
+): Promise<number> {
   let bytesWritten = 0;
   const limitStream = new Transform({
     transform(chunk: Buffer, _encoding, callback) {
@@ -164,10 +194,10 @@ async function fetchClip(urlValue: string, outputPath: string, allowedBytes: num
   });
   try {
     await pipeline(
-      Readable.fromWeb(response.body as import("node:stream/web").ReadableStream<Uint8Array>),
+      source,
       limitStream,
       createWriteStream(outputPath, { flags: "wx" }),
-      { signal: downloadSignal },
+      { signal },
     );
   } catch (error) {
     await rm(outputPath, { force: true });
