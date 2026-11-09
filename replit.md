@@ -61,6 +61,7 @@ The studio provides a dashboard, screenplay editor, AI co-writer, audience safet
 - Gemini direct API keys for new users may reject older model names; the client defaults to `GEMINI_MODEL` or `gemini-3.6-flash`.
 - A mock video provider creates queue records, not rendered video; real media downloads depend on the selected provider returning accessible clip URLs.
 - Provider-clip episode MP4 exports share a global capacity of two via PostgreSQL leases (including streaming and cleanup), with no queue. Excess requests return 503 / `EPISODE_EXPORT_BUSY` and `Retry-After: 15`. Owners renew every 15 seconds; leases expire after 60 seconds, and failed renewal stops the export. Database failures never fall back to local admission. This is separate from the storyboard movie queue.
+- An admitted provider-clip episode export has a 15-minute total budget across provider downloads, media conversion, and MP4 delivery. The deadline aborts active work/streams; temporary-file cleanup finishes before admission is released. A timeout before delivery returns a retryable 502; during delivery the partial response is closed.
 - Roll out shared admission only after applying the DB schema, and drain/restart all old API instances: older versions do not participate in shared admission. Changing the capacity requires draining exports and updating both the code constant and the `provider-clip-episode` pool capacity together; mismatched instances fail closed.
 
 ## Pointers

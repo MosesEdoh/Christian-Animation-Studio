@@ -16,9 +16,12 @@ const MAX_CLIP_BYTES = 100 * 1024 * 1024;
 const MAX_REDIRECTS = 3;
 const CLIP_TIMEOUT_MS = 30_000;
 const FFMPEG_TIMEOUT_MS = 3 * 60_000;
+// One budget across all clips, conversion, and delivery; per-tool timeouts alone
+// cannot bound a many-clip export or a client that never drains its response.
+export const EPISODE_EXPORT_LIFETIME_MS = 15 * 60_000;
 
 // Shared provider-clip admission is independent of the storyboard movie queue.
-const retainedExports = new Map<string, EpisodeExportLease>();
+const retainedExports = new Map<string, { lease: EpisodeExportLease; deadline: NodeJS.Timeout }>();
 
 export class EpisodeVideoUnavailableError extends Error {
   constructor(public readonly report: EpisodeVideoReport) {
@@ -210,7 +213,13 @@ export async function assembleEpisodeVideo(
   signal?.throwIfAborted();
   // Acquire globally before creating files or contacting providers. No local fallback.
   const lease = await episodeExportAdmission.acquire();
-  signal = AbortSignal.any([lease.signal, ...(signal ? [signal] : [])]);
+  const lifetime = new AbortController();
+  const deadline = setTimeout(() => lifetime.abort(new DOMException(
+    "The episode export exceeded its total time limit. Please retry the download.",
+    "TimeoutError",
+  )), EPISODE_EXPORT_LIFETIME_MS);
+  deadline.unref();
+  signal = AbortSignal.any([lifetime.signal, lease.signal, ...(signal ? [signal] : [])]);
   let directory: string | undefined;
   const report: EpisodeVideoReport = { usedClipIds: [], skippedClips: [] };
   const normalizedFiles: string[] = [];
@@ -292,12 +301,13 @@ export async function assembleEpisodeVideo(
     signal?.throwIfAborted();
     // Retain capacity while the caller streams the MP4 and until cleanup completes.
     lease.assertOwned();
-    retainedExports.set(directory, lease);
+    retainedExports.set(directory, { lease, deadline });
     return { directory, outputPath, report, signal };
   } catch (error) {
     try {
       if (directory) await rm(directory, { recursive: true, force: true });
     } finally {
+      clearTimeout(deadline);
       await lease.release();
     }
     throw error;
@@ -305,13 +315,14 @@ export async function assembleEpisodeVideo(
 }
 
 export async function removeEpisodeVideo(directory: string): Promise<void> {
-  const lease = retainedExports.get(directory);
+  const retained = retainedExports.get(directory);
   // Claim cleanup before its first await so duplicate cleanup cannot release early.
   retainedExports.delete(directory);
   try {
     await rm(directory, { recursive: true, force: true });
   } finally {
+    clearTimeout(retained?.deadline);
     // Deleting twice (or concurrently) must never release another export's slot.
-    await lease?.release();
+    await retained?.lease.release();
   }
 }

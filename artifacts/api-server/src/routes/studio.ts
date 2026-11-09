@@ -895,7 +895,7 @@ router.get("/studio/episodes/:id/video", async (req, res): Promise<void> => {
     controller.signal.throwIfAborted();
     const assembled = await assembleEpisodeVideo(clips.map(({ clip }) => clip), undefined, controller.signal);
     directory = assembled.directory;
-    controller.signal.throwIfAborted();
+    assembled.signal.throwIfAborted();
     res.setHeader("Content-Type", "video/mp4");
     res.setHeader("Content-Disposition", `attachment; filename="episode-${episode.number}.mp4"`);
     res.setHeader("Cache-Control", "private, no-store");
@@ -924,7 +924,11 @@ router.get("/studio/episodes/:id/video", async (req, res): Promise<void> => {
     }
     req.log.error({ err: error, episodeId }, "Episode video assembly failed");
     if (res.headersSent) res.destroy();
-    else res.status(502).json({ error: "The episode clips could not be assembled into an MP4." });
+    else res.status(502).json({
+      error: error instanceof Error && error.name === "TimeoutError"
+        ? "The episode export exceeded its total time limit. Please retry the download."
+        : "The episode clips could not be assembled into an MP4.",
+    });
   } finally {
     req.off("aborted", abort);
     res.off("close", onClose);

@@ -2,8 +2,10 @@ import "./fixtures/databaseEnvironment";
 import assert from "node:assert/strict";
 import { after, afterEach, before, beforeEach, mock, test } from "node:test";
 import { execFileSync } from "node:child_process";
+import { appendFileSync, readdirSync } from "node:fs";
 import { chmod, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { EventEmitter } from "node:events";
+import { createServer, get, type ServerResponse } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Writable } from "node:stream";
@@ -11,6 +13,7 @@ import { episodeExportAdmission, acquireEpisodeExportLease, type EpisodeAdmissio
 import {
   assembleEpisodeVideo, EpisodeVideoUnavailableError, removeEpisodeVideo,
   EpisodeVideoBusyError, MAX_CONCURRENT_EPISODE_EXPORTS, EPISODE_EXPORT_RETRY_SECONDS,
+  EPISODE_EXPORT_LIFETIME_MS,
   type EpisodeVideoClip,
 } from "../src/lib/episodeVideo";
 
@@ -251,7 +254,8 @@ test("the HTTP handler streams MP4/report headers and returns exact unavailable 
       return chain;
     },
   })) as typeof db.select);
-  async function invoke(disconnect?: "fetch" | "stream" | "request") {
+  const deadlines = captureExportDeadlines();
+  async function invoke(disconnect?: "fetch" | "stream" | "request" | "timeout") {
     let warnings = 0;
     let providerSignal: AbortSignal | null | undefined;
     const chunks: Buffer[] = [];
@@ -274,10 +278,11 @@ test("the HTTP handler streams MP4/report headers and returns exact unavailable 
     });
     mock.method(globalThis, "fetch", async (_input, init) => {
       providerSignal = init?.signal;
-      if (disconnect === "fetch" || disconnect === "request") {
+      if (disconnect === "fetch" || disconnect === "request" || disconnect === "timeout") {
         return new Promise<Response>((_resolve, reject) => {
           providerSignal!.addEventListener("abort", () => reject(providerSignal!.reason), { once: true });
-          if (disconnect === "request") req.emit("aborted");
+          if (disconnect === "timeout") deadlines.at(-1)!.expire();
+          else if (disconnect === "request") req.emit("aborted");
           else res.destroy();
         });
       }
@@ -303,6 +308,14 @@ test("the HTTP handler streams MP4/report headers and returns exact unavailable 
   assert.match(JSON.stringify(unavailable.json), /did not provide a downloadable/);
   assert.equal(unavailable.bytes.length, 0);
   selectedClips = [clip(1)];
+  const timedOut = await invoke("timeout");
+  assert.equal(timedOut.status, 502);
+  assert.deepEqual(timedOut.json, {
+    error: "The episode export exceeded its total time limit. Please retry the download.",
+  });
+  assert.equal(timedOut.warnings, 1);
+  assert.equal(timedOut.headers.has("Content-Type"), false);
+  assert.equal(owners.size, 0);
   for (const stage of ["fetch", "stream", "request"] as const) {
     const before = await episodeDirectories();
     const cancelled = await invoke(stage);
@@ -316,6 +329,136 @@ test("the HTTP handler streams MP4/report headers and returns exact unavailable 
 
 const episodeDirectories = async () =>
   (await readdir(tmpdir())).filter(name => name.startsWith("frame-faith-episode-")).sort();
+
+// Fire only the overall deadline, without waiting 15 minutes or shortening media
+// tool budgets. Real timers remain installed so disposal is tested as well.
+function captureExportDeadlines() {
+  const deadlines: Array<{ expire: () => void; timer: NodeJS.Timeout }> = [];
+  const original = setTimeout;
+  mock.method(globalThis, "setTimeout", ((callback: () => void, ms?: number) => {
+    const timer = original(callback, ms);
+    if (ms === EPISODE_EXPORT_LIFETIME_MS) deadlines.push({ expire: callback, timer });
+    return timer;
+  }) as typeof setTimeout);
+  return deadlines;
+}
+
+test("the total deadline aborts provider work, removes partial files, and releases admission before retry", async () => {
+  const before = await episodeDirectories();
+  const deadlines = captureExportDeadlines();
+  const cleared = mock.method(globalThis, "clearTimeout");
+  let providerSignal: AbortSignal | null | undefined;
+  const fetchMock = mock.method(globalThis, "fetch", async (_input, init) => {
+    providerSignal = init?.signal;
+    return new Promise<Response>((_resolve, reject) => {
+      providerSignal!.addEventListener("abort", () => reject(providerSignal!.reason), { once: true });
+      assert.equal(deadlines.length, 1);
+      deadlines[0].expire();
+    });
+  });
+  await assert.rejects(assembleEpisodeVideo([clip(1), clip(2)]), { name: "TimeoutError" });
+  assert.equal(providerSignal?.aborted, true);
+  assert.equal(fetchMock.mock.callCount(), 1);
+  assert.equal(owners.size, 0);
+  assert.deepEqual(await episodeDirectories(), before);
+  assert.ok(cleared.mock.calls.some(call => call.arguments[0] === deadlines[0].timer));
+  mock.method(globalThis, "fetch", async () => videoResponse());
+  const retry = await assembleEpisodeVideo([clip(1)]);
+  await removeEpisodeVideo(retry.directory);
+  assert.ok(cleared.mock.calls.some(call => call.arguments[0] === deadlines[1].timer));
+});
+
+test("a paused HTTP client cannot retain an export slot beyond the shared assembly/delivery deadline", async () => {
+  const { db, studioEpisodesTable } = await import("@workspace/db");
+  const { default: router } = await import("../src/routes/studio");
+  const handler = router.stack.find(layer => layer.route?.path === "/studio/episodes/:id/video")!.route.stack[0].handle;
+  mock.method(db, "select", (() => ({
+    from(table: unknown) {
+      if (table === studioEpisodesTable) return { where: async () => [{ id: 1, number: 8 }] };
+      const chain = {
+        innerJoin: () => chain, where: () => chain,
+        orderBy: async () => [{ clip: clip(1) }],
+      };
+      return chain;
+    },
+  })) as typeof db.select);
+  mock.method(globalThis, "fetch", async () => videoResponse());
+  const deadlines = captureExportDeadlines();
+  const before = await episodeDirectories();
+  let padOutput = true;
+  let response: ServerResponse | undefined;
+  let handlerDone: Promise<void> | undefined;
+  let releaseCount = 0;
+  const release = store.release;
+  mock.method(store, "release", async (owner: string) => {
+    // Capacity must not be advertised until all temporary files are gone.
+    assert.deepEqual(await episodeDirectories(), before);
+    releaseCount++;
+    await release(owner);
+  });
+  const server = createServer((req, res) => {
+    response = res;
+    const setHeader = res.setHeader.bind(res);
+    res.setHeader = (name, value) => {
+      if (padOutput && name === "Content-Type") {
+        const dirs = readdirSync(tmpdir()).filter(name => name.startsWith("frame-faith-episode-") && !before.includes(name));
+        assert.equal(dirs.length, 1);
+        // A valid MP4 with trailing padding large enough to exceed TCP buffers.
+        appendFileSync(join(tmpdir(), dirs[0], "episode.mp4"), Buffer.alloc(32 * 1024 * 1024));
+      }
+      return setHeader(name, value);
+    };
+    Object.assign(req, { params: { id: "1" }, log: { error() { assert.fail("Unexpected HTTP export error"); } } });
+    handlerDone = handler(req, res, () => {});
+  });
+  await new Promise<void>(resolve => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address !== "string");
+  const url = `http://127.0.0.1:${address.port}/episode`;
+  const request = get(url);
+  try {
+    const client = await new Promise<import("node:http").IncomingMessage>((resolve, reject) => {
+      request.once("response", resolve);
+      request.once("error", reject);
+    });
+    client.pause(); // Keep the TCP connection open without reading the MP4.
+    client.on("error", () => {});
+    await new Promise(resolve => setTimeout(resolve, 50));
+    assert.equal(response?.writableFinished, false);
+    assert.equal(owners.size, 1);
+    assert.equal(deadlines.length, 1); // Assembly and delivery use the same clock.
+    deadlines[0].expire();
+    await handlerDone;
+    assert.equal(response?.destroyed, true);
+    assert.equal(owners.size, 0);
+    assert.equal(releaseCount, 1);
+    assert.deepEqual(await episodeDirectories(), before);
+    request.destroy();
+    client.destroy();
+
+    padOutput = false;
+    const bytes = await new Promise<number>((resolve, reject) => {
+      get(url, res => {
+        assert.equal(res.statusCode, 200);
+        let size = 0;
+        res.on("data", chunk => { size += chunk.length; });
+        res.once("end", () => resolve(size));
+        res.once("error", reject);
+      }).once("error", reject);
+    });
+    await handlerDone;
+    assert.ok(bytes > 0);
+    assert.equal(releaseCount, 2);
+    assert.equal(owners.size, 0);
+    assert.deepEqual(await episodeDirectories(), before);
+  } finally {
+    request.destroy();
+    response?.destroy();
+    await handlerDone;
+    server.closeAllConnections();
+    await new Promise<void>(resolve => server.close(() => resolve()));
+  }
+});
 
 test("concurrent HTTP exports reject overflow without downloads or temp files and release on cancellation and failure", async () => {
   process.env.DATABASE_URL ??= "postgresql://test:test@localhost/unused";
@@ -537,7 +680,8 @@ test("cancelling a streaming provider body closes the download and removes parti
 });
 
 for (const stage of ["probe", "normalize", "concat"]) {
-  test(`cancelling during ${stage} kills the media process before deleting files and allows retry`, async () => {
+  for (const reason of ["cancellation", "deadline"]) {
+  test(`${reason} during ${stage} kills the media process before deleting files and allows retry`, async () => {
     const before = await episodeDirectories();
     const bin = await mkdtemp(join(fixtures, "media-bin-"));
     const marker = join(bin, "pid");
@@ -560,10 +704,11 @@ exec '${tool === "ffmpeg" ? realFfmpeg : realFfprobe}' "$@"
     const oldPath = process.env.PATH;
     process.env.PATH = `${bin}:${oldPath}`;
     const controller = new AbortController();
+    const deadlines = captureExportDeadlines();
     mock.method(globalThis, "fetch", async () => videoResponse());
     const work = assembleEpisodeVideo([clip(1)], undefined, controller.signal);
     // Attach the rejection handler now, before triggering cancellation.
-    const rejection = assert.rejects(work, { name: "AbortError" });
+    const rejection = assert.rejects(work, { name: reason === "deadline" ? "TimeoutError" : "AbortError" });
     try {
       let pid: number | undefined;
       for (let attempt = 0; attempt < 500; attempt++) {
@@ -571,7 +716,8 @@ exec '${tool === "ffmpeg" ? realFfmpeg : realFfprobe}' "$@"
         await new Promise(resolve => setTimeout(resolve, 10));
       }
       assert.ok(pid, `media process never reached ${stage}`);
-      controller.abort();
+      if (reason === "deadline") deadlines.at(-1)!.expire();
+      else controller.abort();
       await rejection;
       assert.throws(() => process.kill(pid!, 0), { code: "ESRCH" });
       assert.deepEqual(await episodeDirectories(), before);
@@ -584,4 +730,5 @@ exec '${tool === "ffmpeg" ? realFfmpeg : realFfprobe}' "$@"
     await removeEpisodeVideo(retry.directory);
     assert.deepEqual(await episodeDirectories(), before);
   });
+  }
 }
