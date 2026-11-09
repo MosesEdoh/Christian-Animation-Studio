@@ -1,14 +1,16 @@
-import { addAbortSignal } from "node:stream";
-import { mkdtemp, writeFile, rm } from "node:fs/promises";
+import { mkdtemp, writeFile, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp, { type OverlayOptions } from "sharp";
-import { and, asc, eq, lt, inArray } from "drizzle-orm";
-import { db, studioExportsTable, studioProjectsTable, studioEpisodesTable, studioScenesTable, studioShotsTable, studioAssetsTable } from "@workspace/db";
+import { and, asc, eq, lt, inArray, sql } from "drizzle-orm";
+import { db, createBoundedDatabase, studioExportsTable, studioProjectsTable, studioEpisodesTable, studioScenesTable, studioShotsTable, studioAssetsTable } from "@workspace/db";
 import { ObjectStorageService } from "./objectStorage";
 import { storePrivateMedia } from "./privateMedia";
 import { logger } from "./logger";
 import { movieImage, runMovieEncoder } from "./movieWork";
+import { MovieBudget, MovieBudgetError, movieLimits, movieLookup, movieOperation, smallerMovie } from "./movieBudget";
+
+export const movieDb = createBoundedDatabase();
 
 type ExportRow = typeof studioExportsTable.$inferSelect;
 let stopping = false;
@@ -32,7 +34,9 @@ export const exportView = (row: ExportRow) => ({
   ...row, url: row.status === "ready" && row.objectPath ? `/api/studio/exports/${row.id}/file` : null,
 });
 const xml = (value: string) => value.replace(/[<>&"']/g, char => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", '"': "&quot;", "'": "&apos;" }[char]!));
-function wrap(text: string, width: number) {
+function wrap(text: string, width: number, maxLines = movieLimits.frames * 18) {
+  // Reject before split/word wrapping can allocate unbounded arrays.
+  if (text.length > maxLines * (width + 2)) throw new MovieBudgetError(`Movie script text is too large. ${smallerMovie}`);
   const lines: string[] = [];
   for (const paragraph of text.replace(/\r/g, "").split("\n")) {
     if (!paragraph.trim()) { lines.push(""); continue; }
@@ -46,24 +50,36 @@ function wrap(text: string, width: number) {
       else line = line ? `${line} ${word}` : word;
     }
     if (line) lines.push(line);
+    if (lines.length > maxLines) throw new MovieBudgetError(`Movie script text is too large. ${smallerMovie}`);
   }
   return lines;
 }
 const seconds = (duration: string) => duration.split(":").reduce((total, part) => total * 60 + Number(part), 0) || 60;
 
-async function render(row: ExportRow, signal: AbortSignal) {
+async function render(row: ExportRow, budget: MovieBudget) {
+  const signal = budget.signal;
   signal.throwIfAborted();
   const directory = await mkdtemp(join(tmpdir(), "faith-movie-"));
   let uploadedPath: string | null = null;
   try {
     signal.throwIfAborted();
-    const [project] = await db.select().from(studioProjectsTable).limit(1);
-    const episodes = await db.select().from(studioEpisodesTable).orderBy(asc(studioEpisodesTable.number));
+    const [project] = await movieLookup(movieDb.select().from(studioProjectsTable).limit(1), signal);
+    const episodes = await movieLookup(movieDb.select().from(studioEpisodesTable)
+      .where(row.episodeId ? eq(studioEpisodesTable.id, row.episodeId) : undefined)
+      .orderBy(asc(studioEpisodesTable.number)).limit(movieLimits.frames + 1), signal);
     const selected = row.episodeId ? episodes.filter(episode => episode.id === row.episodeId) : episodes;
     if (!project || !selected.length) throw new Error("Episode not found");
-    const scenes = await db.select().from(studioScenesTable).orderBy(asc(studioScenesTable.number));
-    const shots = await db.select().from(studioShotsTable).orderBy(asc(studioShotsTable.number));
-    const assets = await db.select().from(studioAssetsTable).orderBy(asc(studioAssetsTable.id));
+    budget.checkFrames(selected.length + 1);
+    const scenes = await movieLookup(movieDb.select().from(studioScenesTable)
+      .where(inArray(studioScenesTable.episodeId, selected.map(episode => episode.id)))
+      .orderBy(asc(studioScenesTable.number)).limit(movieLimits.frames + 1), signal);
+    budget.checkFrames(selected.length + scenes.length + 1);
+    const sceneIds = scenes.map(scene => scene.id);
+    const shots = sceneIds.length ? await movieLookup(movieDb.select().from(studioShotsTable)
+      .where(inArray(studioShotsTable.sceneId, sceneIds)).orderBy(asc(studioShotsTable.number)).limit(20_001), signal) : [];
+    const assets = sceneIds.length ? await movieLookup(movieDb.select().from(studioAssetsTable)
+      .where(inArray(studioAssetsTable.sceneId, sceneIds)).orderBy(asc(studioAssetsTable.id)).limit(20_001), signal) : [];
+    if (shots.length > 20_000 || assets.length > 20_000) throw new MovieBudgetError(`Movie has too many shots or references. ${smallerMovie}`);
     const portrait = row.aspectRatio === "9:16";
     const width = portrait ? 720 : 1280;
     const height = portrait ? 1280 : 720;
@@ -71,7 +87,8 @@ async function render(row: ExportRow, signal: AbortSignal) {
     const frames: { label: string; title: string; lines: string[]; image: string | null; seconds: number; shot: string }[] = [];
     for (const episode of selected) {
       signal.throwIfAborted();
-      frames.push({ label: project.title, title: `Episode ${episode.number}: ${episode.title}`, lines: wrap(episode.summary, portrait ? 45 : 43), image: null, seconds: 6, shot: "Silent storyboard movie · review edition" });
+      budget.checkFrames(frames.length + 2);
+      frames.push({ label: project.title, title: `Episode ${episode.number}: ${episode.title}`, lines: wrap(episode.summary, portrait ? 45 : 43, portrait ? 18 : 13), image: null, seconds: 6, shot: "Silent storyboard movie · review edition" });
       const episodeScenes = scenes.filter(scene => scene.episodeId === episode.id);
       if (!episodeScenes.length) throw new Error("Complete the episode script first");
       for (const scene of episodeScenes) {
@@ -80,6 +97,7 @@ async function render(row: ExportRow, signal: AbortSignal) {
         const lines = wrap(scene.content || scene.synopsis, portrait ? 46 : 43);
         const pageSize = portrait ? 18 : 13;
         const pageCount = Math.max(1, Math.ceil(lines.length / pageSize));
+        budget.checkFrames(frames.length + pageCount + 1);
         for (let page = 0; page < pageCount; page++) {
           const shot = sceneShots[Math.min(sceneShots.length - 1, Math.floor(page * sceneShots.length / pageCount))];
           const reference = shot?.referenceImageUrl ?? assets.filter(asset => asset.sceneId === scene.id && asset.kind === "storyboard").at(-1)?.objectPath ?? null;
@@ -95,6 +113,8 @@ async function render(row: ExportRow, signal: AbortSignal) {
       }
     }
     frames.push({ label: project.title, title: "End of storyboard movie", lines: ["A review animatic made from your saved scripts", "and reference images.", "", "Not final animation. No recorded dialogue.", "Review Bible references and age suitability", "before sharing with children."], image: null, seconds: 7, shot: "Frame & Faith · private studio" });
+    const totalDuration = frames.reduce((sum, frame) => sum + frame.seconds, 0);
+    budget.checkDuration(totalDuration);
     const storage = new ObjectStorageService();
     const images = new Map<string, Buffer>();
     const concat: string[] = [];
@@ -122,49 +142,80 @@ async function render(row: ExportRow, signal: AbortSignal) {
       const overlays: OverlayOptions[] = [];
       if (frame.image) {
         if (!images.has(frame.image)) {
-          const file = await storage.getObjectEntityFile(frame.image);
+          const file = await movieLookup(storage.getObjectEntityFile(frame.image), signal);
           signal.throwIfAborted();
-          const chunks: Buffer[] = [];
-          for await (const chunk of addAbortSignal(signal, file.createReadStream())) {
-            chunks.push(Buffer.from(chunk));
-          }
-          images.set(frame.image, Buffer.concat(chunks));
+          images.set(frame.image, await budget.reference(file.createReadStream()));
         }
-        const image = sharp(images.get(frame.image)!).rotate().resize(Math.round(imageBox.width * scale), Math.round(imageBox.height * scale), { fit: "contain", background: "#242338" }).png();
-        const input = await movieImage(image, () => image.toBuffer(), signal);
+        const image = sharp(images.get(frame.image)!, { limitInputPixels: 16_777_216 }).rotate().resize(Math.round(imageBox.width * scale), Math.round(imageBox.height * scale), { fit: "contain", background: "#242338" }).png();
+        const input = await movieImage(image.timeout({ seconds: budget.remainingSeconds }), () => image.toBuffer(), signal);
         overlays.push({ input, left: Math.round(imageBox.left * scale), top: Math.round(imageBox.top * scale) });
       }
       const filename = `frame-${String(index).padStart(5, "0")}.png`;
       const image = sharp(Buffer.from(svg)).composite(overlays).png();
-      await movieImage(image, () => image.toFile(join(directory, filename)), signal);
+      const png = await movieImage(image.timeout({ seconds: budget.remainingSeconds }), () => image.toBuffer(), signal);
+      budget.addTemporary(png.length);
+      await writeFile(join(directory, filename), png, { signal });
       concat.push(`file '${filename}'`, `duration ${frame.seconds.toFixed(3)}`);
       duration += frame.seconds;
-      if (index % 6 === 0) await db.update(studioExportsTable).set({ progress: Math.round((index + 1) / frames.length * 45) }).where(renderingJob(row.id));
+      if (index % 6 === 0) await movieOperation(movieDb.update(studioExportsTable).set({ progress: Math.round((index + 1) / frames.length * 45) }).where(renderingJob(row.id)), signal);
     }
     concat.push(`file 'frame-${String(frames.length - 1).padStart(5, "0")}.png'`);
-    await writeFile(join(directory, "frames.txt"), concat.join("\n"));
+    const manifest = concat.join("\n");
+    budget.addTemporary(Buffer.byteLength(manifest));
+    await writeFile(join(directory, "frames.txt"), manifest, { signal });
     const output = join(directory, "movie.mp4");
     signal.throwIfAborted();
-    await db.update(studioExportsTable).set({ progress: 50 }).where(renderingJob(row.id));
+    await movieOperation(movieDb.update(studioExportsTable).set({ progress: 50 }).where(renderingJob(row.id)), signal);
     signal.throwIfAborted();
+    // FFmpeg may exceed -fs by one muxed packet. Reserve 16 MiB (more than a
+    // raw 1080p RGBA frame) and reject size-limited output, never publish a cut movie.
+    const outputLimit = budget.remainingTemporaryBytes - 16 * 1024 * 1024;
+    if (outputLimit <= 0) throw budget.diskError();
     await runMovieEncoder([
         "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", join(directory, "frames.txt"),
         "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
         "-t", duration.toFixed(3), "-vf", "fps=2,format=yuv420p", "-c:v", "libx264", "-preset", "ultrafast",
         "-crf", "23", "-threads", "2", "-c:a", "aac", "-b:a", "32k", "-movflags", "+faststart",
+        "-fs", String(outputLimit),
         "-metadata", "title=Frame & Faith — Silent storyboard review movie", output,
       ], signal);
     signal.throwIfAborted();
-    await db.update(studioExportsTable).set({ progress: 90 }).where(renderingJob(row.id));
-    uploadedPath = await storePrivateMedia(output, "mp4", "video/mp4", signal);
+    const outputSize = (await stat(output)).size;
+    if (outputSize >= outputLimit) throw budget.diskError();
+    budget.addTemporary(outputSize);
+    await movieOperation(movieDb.update(studioExportsTable).set({ progress: 90 }).where(renderingJob(row.id)), signal);
+    // Upload cancellation closes the pipeline; do not let remote best-effort
+    // deletion after an aborted upload hold the render worker indefinitely.
+    uploadedPath = await movieLookup(storePrivateMedia(output, "mp4", "video/mp4", signal), signal);
     signal.throwIfAborted();
-    const [saved] = await db.update(studioExportsTable).set({ status: "ready", progress: 100, objectPath: uploadedPath, error: null }).where(renderingJob(row.id)).returning();
+    const path = uploadedPath;
+    let abandoned = false;
+    const completion = Promise.resolve(movieDb.update(studioExportsTable)
+      .set({ status: "ready", progress: 100, objectPath: path, error: null })
+      .where(and(renderingJob(row.id), sql`clock_timestamp() < ${budget.expiresAt}`)).returning())
+      .then(async saved => {
+        // A query may commit before its response arrives. If our wait was
+        // abandoned, compensate even if the normal failure write ran earlier.
+        if (saved.length && (abandoned || signal.aborted)) {
+          await movieOperation(movieDb.update(studioExportsTable)
+            .set({ status: "failed", progress: 0, objectPath: null, startedAt: null,
+              error: "Saving the movie exceeded its deadline. Try building it again." })
+            .where(and(eq(studioExportsTable.id, row.id), eq(studioExportsTable.status, "ready"), eq(studioExportsTable.objectPath, path))));
+        }
+        return saved;
+      });
+    let saved: ExportRow | undefined;
+    try { [saved] = await movieOperation(completion, signal); }
+    catch (error) { abandoned = true; throw error; }
+    if (!saved && Date.now() >= budget.expiresAt.getTime()) {
+      throw new MovieBudgetError(`Saving the movie exceeded its render deadline. ${smallerMovie}`);
+    }
     if (saved) uploadedPath = null;
   } finally {
     try {
       if (uploadedPath) {
-        const file = await new ObjectStorageService().getObjectEntityFile(uploadedPath);
-        await file.delete({ ignoreNotFound: true });
+        const file = await movieOperation(new ObjectStorageService().getObjectEntityFile(uploadedPath));
+        await movieOperation(file.delete({ ignoreNotFound: true }));
       }
     } finally { await rm(directory, { recursive: true, force: true }); }
   }
@@ -175,26 +226,26 @@ export async function wakeMovieWorker() {
   if (running || stopping) return;
   running = true;
   try {
-    // A crashed process cannot hold a job indefinitely; active renders have a
-    // twenty-minute timeout, so a thirty-minute lease can safely be retried.
-    await db.update(studioExportsTable).set({ status: "queued", progress: 0 })
-      .where(and(eq(studioExportsTable.status, "rendering"), lt(studioExportsTable.startedAt, new Date(Date.now() - 30 * 60_000))));
+    // The whole render has a twenty-minute budget, below the recovery lease.
+    await movieOperation(movieDb.update(studioExportsTable).set({ status: "queued", progress: 0 })
+      .where(and(eq(studioExportsTable.status, "rendering"), lt(studioExportsTable.startedAt, new Date(Date.now() - 30 * 60_000)))));
     while (!stopping) {
-      const [candidate] = await db.select().from(studioExportsTable).where(eq(studioExportsTable.status, "queued")).orderBy(asc(studioExportsTable.id)).limit(1);
+      const [candidate] = await movieOperation(movieDb.select().from(studioExportsTable).where(eq(studioExportsTable.status, "queued")).orderBy(asc(studioExportsTable.id)).limit(1));
       if (!candidate) break;
-      const [job] = await db.update(studioExportsTable).set({ status: "rendering", startedAt: new Date(), error: null })
-        .where(and(eq(studioExportsTable.id, candidate.id), eq(studioExportsTable.status, "queued"))).returning();
+      const [job] = await movieOperation(movieDb.update(studioExportsTable).set({ status: "rendering", startedAt: new Date(), error: null })
+        .where(and(eq(studioExportsTable.id, candidate.id), eq(studioExportsTable.status, "queued"))).returning());
       if (!job) continue;
       activeJobId = job.id;
       const controller = new AbortController();
       activeController = controller;
+      const budget = new MovieBudget(controller.signal);
       // Also observe cancellation accepted by another server process.
       let checking = false;
       const checkCancellation = async () => {
         if (checking || controller.signal.aborted) return;
         checking = true;
         try {
-          const [current] = await db.select().from(studioExportsTable).where(eq(studioExportsTable.id, job.id));
+          const [current] = await movieOperation(movieDb.select().from(studioExportsTable).where(eq(studioExportsTable.id, job.id)), budget.signal);
           if (!current || current.status !== "rendering") controller.abort(cancelledError());
         } catch (error) {
           logger.warn({ err: error, exportId: job.id }, "Could not check movie cancellation");
@@ -203,18 +254,26 @@ export async function wakeMovieWorker() {
       const poll = setInterval(() => { void checkCancellation(); }, 500);
       try {
         activeRender = (async () => {
-          await checkCancellation();
-          await render(job, controller.signal);
+          await movieLookup(checkCancellation(), budget.signal);
+          await render(job, budget);
         })();
         await activeRender;
       }
       catch (error) {
         if (!stopping && !controller.signal.aborted) logger.error({ err: error, exportId: job.id }, "Storyboard movie failed");
-        await db.update(studioExportsTable).set(stopping
+        try { await movieOperation(movieDb.update(studioExportsTable).set(stopping
           ? { status: "queued", progress: 0, startedAt: null, error: null }
-          : { status: "failed", error: "Movie could not be built. Check references and try building again." }).where(renderingJob(job.id));
+          : { status: "failed", progress: 0, startedAt: null, error:
+            (budget.signal.aborted ? budget.signal.reason : error) instanceof MovieBudgetError
+              ? ((budget.signal.aborted ? budget.signal.reason : error) as MovieBudgetError).message
+              : "Movie could not be built. Check references and try building again.", objectPath: null })
+          .where(and(eq(studioExportsTable.id, job.id), eq(studioExportsTable.startedAt, job.startedAt!),
+            inArray(studioExportsTable.status, ["rendering", "ready"]))));
+        } catch (statusError) {
+          logger.error({ err: statusError, exportId: job.id }, "Could not save failed movie status; recovery lease will retry it");
+        }
       }
-      finally { clearInterval(poll); activeController = null; activeRender = null; activeJobId = null; }
+      finally { budget.dispose(); clearInterval(poll); activeController = null; activeRender = null; activeJobId = null; }
     }
   } catch (error) { logger.error({ err: error }, "Movie worker failed"); }
   finally { running = false; }
@@ -225,6 +284,6 @@ export async function stopMovieWorker() {
   const jobId = activeJobId;
   activeController?.abort(new Error("Studio server is restarting"));
   await activeRender?.catch(() => {});
-  if (jobId) await db.update(studioExportsTable).set({ status: "queued", progress: 0, startedAt: null })
-    .where(and(eq(studioExportsTable.id, jobId), eq(studioExportsTable.status, "rendering")));
+  if (jobId) await movieOperation(movieDb.update(studioExportsTable).set({ status: "queued", progress: 0, startedAt: null })
+    .where(and(eq(studioExportsTable.id, jobId), eq(studioExportsTable.status, "rendering"))));
 }
