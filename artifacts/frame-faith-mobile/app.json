@@ -1,0 +1,27 @@
+{
+  "expo": {
+    "name": "Frame & Faith Mobile",
+    "slug": "frame-faith-mobile",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/frame-faith-icon.png",
+    "scheme": "frame-faith-mobile",
+    "userInterfaceStyle": "automatic",
+    "ios": {
+      "supportsTablet": false
+    },
+    "android": {},
+    "web": {
+      "favicon": "./assets/images/frame-faith-icon.png",
+      "output": "static"
+    },
+    "plugins": [
+      "expo-router",
+      "expo-video"
+    ],
+    "experiments": {
+      "typedRoutes": true,
+      "reactCompiler": true
+    }
+  }
+}

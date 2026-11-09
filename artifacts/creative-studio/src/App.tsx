@@ -29,6 +29,8 @@ import {
   Sparkles,
   UsersRound,
   WandSparkles,
+  Download,
+  ExternalLink,
   X,
   type LucideIcon,
 } from 'lucide-react';
@@ -36,6 +38,7 @@ import {
   getGetStudioBootstrapQueryKey,
   useCheckSceneContent,
   useCompleteStudioEpisode,
+  useCreateStudioAsset,
   useCreateStudioCharacter,
   useCreateStudioScene,
   useCreateStudioShot,
@@ -50,6 +53,7 @@ import {
   useUpdateStudioProject,
   useUpdateStudioScene,
   useUpdateStudioShot,
+  useRequestUploadUrl,
   type Character,
   type Clip,
   type Episode,
@@ -281,6 +285,8 @@ function StudioWorkspace() {
   const updateProject = useUpdateStudioProject();
   const createCharacter = useCreateStudioCharacter();
   const updateCharacter = useUpdateStudioCharacter();
+  const createAsset = useCreateStudioAsset();
+  const requestUploadUrl = useRequestUploadUrl();
   const createScene = useCreateStudioScene();
   const completeEpisode = useCompleteStudioEpisode();
   const updateScene = useUpdateStudioScene();
@@ -646,34 +652,23 @@ function StudioWorkspace() {
   ): Promise<string> => {
     if (!file.type.startsWith('image/')) throw new Error('Choose an image file.');
     if (file.size > 10 * 1024 * 1024) throw new Error('Images must be 10 MB or smaller.');
-    const request = await fetch('/api/storage/uploads/request-url', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ name: file.name, size: file.size, contentType: file.type }),
+    const upload = await requestUploadUrl.mutateAsync({
+      data: { name: file.name, size: file.size, contentType: file.type },
     });
-    if (request.status === 401) throw new Error('Sign in to upload reference images.');
-    if (!request.ok) throw new Error('Could not prepare the image upload.');
-    const upload = await request.json() as { uploadURL: string; objectPath: string };
     const put = await fetch(upload.uploadURL, {
       method: 'PUT',
       headers: { 'Content-Type': file.type },
       body: file,
     });
     if (!put.ok) throw new Error('The image could not be uploaded to App Storage.');
-    const saved = await fetch('/api/studio/assets', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
+    const asset = await createAsset.mutateAsync({
+      data: {
         ...metadata,
         objectPath: upload.objectPath,
         name: file.name,
         contentType: file.type,
-      }),
+      },
     });
-    if (!saved.ok) throw new Error('The image uploaded, but its reference could not be saved.');
-    const asset = await saved.json() as StudioAsset;
     patchBootstrap((current) => ({ ...current, assets: [...current.assets, asset] }));
     return asset.objectPath;
   };
@@ -1770,6 +1765,10 @@ function AnimationView({
   runClipGeneration: () => void;
   pending: boolean;
 }) {
+  const playableClips = clips.filter((clip) => clip.status === 'ready' && Boolean(clip.url));
+  const [selectedClipId, setSelectedClipId] = useState<number | null>(null);
+  const selectedClip = playableClips.find((clip) => clip.id === selectedClipId) ?? playableClips[0];
+  const clipInProgress = clips.some((clip) => clip.status === 'queued' || clip.status === 'generating');
   return (
     <div className="content-wrap" data-testid="view-animation">
       <div className="page-intro"><div><p className="eyebrow">04 / animation desk</p><h1 className="page-title">Turn the <span className="display-script">sketch</span> into motion.</h1><p className="page-subtitle">Keep the prompt human. Give the movement a reason. Queue only the clips that serve the story.</p></div><span className="status-pill"><Move3d size={13} /> Render queue</span></div>
@@ -1783,7 +1782,47 @@ function AnimationView({
         </section>
         <section className="panel pad" data-testid="panel-clip-queue">
           <div className="section-heading"><div><h2>Clip queue</h2><p>Generated motion stays attached to the shot.</p></div><Scissors size={17} color="var(--coral)" /></div>
-          {clips.length ? <div className="clip-list">{clips.map((clip) => <div className="clip-row" key={clip.id} data-testid={`row-clip-${clip.id}`}><div className="clip-thumb">{clip.status === 'ready' ? <Play size={14} /> : <LoaderCircle size={14} />}</div><div><strong>{clip.provider}</strong><span>{clip.status} · {clip.duration}</span></div>{clip.url ? <a href={clip.url} target="_blank" rel="noreferrer" className="btn btn-quiet" data-testid={`link-clip-${clip.id}`}>Open</a> : <span className="status-text">In progress</span>}</div>)}</div> : <div className="empty-state" style={{ minHeight: 260 }}><Film size={22} /><div><strong>No clips in the queue</strong><p>Pick a shot, write a clear motion prompt, and send the first frame downstream.</p></div></div>}
+          <div className="clip-preview" data-testid="panel-video-preview">
+            {selectedClip?.url ? (
+              <>
+                <div className="video-stage">
+                  <video
+                    key={selectedClip.id}
+                    src={selectedClip.url}
+                    poster={selectedClip.thumbnailUrl ?? undefined}
+                    controls
+                    preload="metadata"
+                    playsInline
+                    aria-label={`Preview of ready clip from ${selectedClip.provider}`}
+                    data-testid={`video-clip-${selectedClip.id}`}
+                  />
+                </div>
+                <div className="video-caption">
+                  <div><span className="eyebrow">Ready to review</span><strong>{selectedClip.provider} · {selectedClip.duration}</strong></div>
+                  <div className="video-actions">
+                    <a className="btn btn-quiet" href={selectedClip.url} download={`frame-faith-clip-${selectedClip.id}`} data-testid={`download-clip-${selectedClip.id}`}><Download size={14} /> Download</a>
+                    <a className="btn btn-primary" href={selectedClip.url} target="_blank" rel="noreferrer" data-testid={`open-clip-${selectedClip.id}`}><ExternalLink size={14} /> Open</a>
+                  </div>
+                </div>
+                {playableClips.length > 1 ? <div className="ready-clip-picker" aria-label="Ready clips">{playableClips.map((clip) => <button type="button" key={clip.id} className={clip.id === selectedClip.id ? 'ready-clip active' : 'ready-clip'} onClick={() => setSelectedClipId(clip.id)} aria-pressed={clip.id === selectedClip.id} data-testid={`button-preview-clip-${clip.id}`}>Clip {clip.id}</button>)}</div> : null}
+              </>
+            ) : (
+              <div className={`video-empty ${clipInProgress ? 'is-loading' : ''}`} role="status" data-testid="state-video-preview-empty">
+                {clipInProgress ? <LoaderCircle size={23} className="loading-mark" /> : <Film size={24} />}
+                <strong>{clipInProgress ? 'Your frame is in motion' : 'No ready preview yet'}</strong>
+                <p>{clipInProgress ? 'The render is still in the queue. This space will open as soon as a ready clip with a video URL arrives.' : clips.some((clip) => clip.status === 'failed') ? 'A render did not make it through. Failed clips stay unavailable here; you can queue another pass from the selected shot.' : 'Queue a clip from a shot. Ready clips with a video URL will appear here with playback controls.'}</p>
+              </div>
+            )}
+          </div>
+          {clips.length ? <div className="clip-list">{clips.map((clip) => {
+            const canPlay = clip.status === 'ready' && Boolean(clip.url);
+            return <div className="clip-row" key={clip.id} data-testid={`row-clip-${clip.id}`}>
+              <div className={`clip-thumb ${canPlay ? 'is-ready' : ''}`}>{canPlay ? <Play size={14} /> : clip.status === 'queued' || clip.status === 'generating' ? <LoaderCircle size={14} /> : <Film size={14} />}</div>
+              <div><strong>{clip.provider}</strong><span>{clip.status} · {clip.duration}{clip.status === 'ready' && !clip.url ? ' · no video URL' : ''}</span></div>
+              {canPlay ? <button type="button" className="btn btn-quiet" onClick={() => setSelectedClipId(clip.id)} aria-label={`Preview ready clip ${clip.id}`} data-testid={`button-select-clip-${clip.id}`}>Preview</button> : <span className="status-text">{clip.status === 'failed' ? 'Unavailable' : clip.status === 'ready' ? 'No URL' : 'In progress'}</span>}
+            </div>;
+          })}</div> : null}
+          {!clips.length ? <div className="empty-state queue-empty" data-testid="state-empty-clip-queue"><Film size={22} /><div><strong>No clips in the queue</strong><p>Pick a shot, write a clear motion prompt, and send the first frame downstream.</p></div></div> : null}
         </section>
       </div>
     </div>
