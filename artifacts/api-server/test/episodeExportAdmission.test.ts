@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
+import { createEpisodeAdmissionDatabaseProxy } from "./fixtures/episodeAdmissionDatabaseProxy";
 import {
   acquireEpisodeExportLease, PostgresEpisodeAdmissionStore, EpisodeVideoBusyError,
   EpisodeExportAdmissionError, type EpisodeAdmissionStore, type EpisodeExportTelemetry,
@@ -181,6 +182,96 @@ test("independent processes enforce a global capacity of two and recover from SI
   assert.equal((await waitFor(message => message.id === 21 && message.kind === "cancelled")).kind, "cancelled");
   survivor.send({ command: "start", id: 24 });
   assert.equal((await waitFor(message => message.id === 24)).kind, "admitted");
+});
+
+test("an isolated database outage stops active exports and stale owners cannot affect recovered capacity", { timeout: 20_000 }, async t => {
+  assert.ok(process.env.DATABASE_URL, "DATABASE_URL is required for the real database integration test");
+  const { db } = await import("@workspace/db");
+  const { sql } = await import("drizzle-orm");
+  const poolName = `episode-outage-test-${randomUUID()}`;
+  const controlStore = new PostgresEpisodeAdmissionStore(poolName, 1, 2400);
+  const proxy = await createEpisodeAdmissionDatabaseProxy(process.env.DATABASE_URL);
+  const worker = fork(new URL("./fixtures/episodeAdmissionWorker.ts", import.meta.url), [
+    poolName, "1", "2400", "200", "700",
+  ], {
+    execArgv: ["--import", "tsx"],
+    stdio: ["ignore", "ignore", "inherit", "ipc"],
+    env: { ...process.env, DATABASE_URL: proxy.connectionString },
+  });
+  const messages: Array<{ id: number; kind: string; owner?: string; owned?: boolean | null }> = [];
+  worker.on("message", message => messages.push(message as typeof messages[number]));
+
+  const waitFor = async (predicate: (message: typeof messages[number]) => boolean) => {
+    for (let attempt = 0; attempt < 400; attempt++) {
+      const found = messages.find(predicate);
+      if (found) return found;
+      if (worker.exitCode !== null || worker.signalCode !== null) {
+        assert.fail(`Export worker exited before the expected message (${worker.exitCode ?? worker.signalCode})`);
+      }
+      await delay(10);
+    }
+    assert.fail("Timed out waiting for export worker");
+  };
+  t.after(async () => {
+    if (worker.exitCode === null && worker.signalCode === null) {
+      const exited = once(worker, "exit");
+      worker.kill("SIGKILL");
+      await exited;
+    }
+    await proxy.close();
+    await db.execute(sql`DELETE FROM episode_export_leases WHERE pool = ${poolName}`);
+    await db.execute(sql`DELETE FROM episode_export_pools WHERE name = ${poolName}`);
+  });
+
+  await waitFor(message => message.kind === "ready");
+  worker.send({ command: "start", id: 1 });
+  const admitted = await waitFor(message => message.id === 1 && message.kind === "admitted");
+  assert.ok(admitted.owner, "worker should expose the admitted lease owner to the integration test");
+
+  // This drops only sockets that use the worker's private proxy URL. Control
+  // queries and the project's shared database service remain connected.
+  proxy.setAvailable(false);
+  assert.equal((await waitFor(message => message.id === 1 && message.kind === "cancelled")).kind, "cancelled");
+
+  // The export stopped on heartbeat failure, but its database lease remains
+  // occupied until its expiry; another admission must not reuse it early.
+  assert.equal(await controlStore.acquire(randomUUID()), false);
+  const activeLease = await db.execute<{ expires_at: Date }>(sql`
+    SELECT expires_at FROM episode_export_leases
+    WHERE owner = ${admitted.owner}::uuid AND pool = ${poolName}`);
+  assert.equal(activeLease.rows.length, 1);
+  assert.ok(new Date(activeLease.rows[0].expires_at).getTime() > Date.now());
+  proxy.setAvailable(true);
+
+  // Wait until the real lease expires, then have a fresh request obtain the
+  // slot through the same worker and restored proxy connection.
+  let freshOwnerAdmitted = false;
+  let freshRequestId = 0;
+  for (let attempt = 0; attempt < 80; attempt++) {
+    freshRequestId = attempt + 2;
+    worker.send({ command: "start", id: freshRequestId });
+    const result = await waitFor(message => message.id === freshRequestId);
+    if (result.kind === "admitted") {
+      freshOwnerAdmitted = true;
+      break;
+    }
+    assert.equal(result.kind, "busy");
+    await delay(50);
+  }
+  assert.equal(freshOwnerAdmitted, true, "capacity should return after the abandoned lease expires");
+
+  // Exercise stale work from the original owner after connectivity returns:
+  // renewal must not extend its expired lease, and release must not delete the
+  // new owner's slot.
+  worker.send({ command: "renew-old", id: 1001, targetId: 1 });
+  assert.equal((await waitFor(message => message.id === 1001)).owned, false);
+  worker.send({ command: "release-old", id: 1002, targetId: 1 });
+  assert.equal((await waitFor(message => message.id === 1002)).kind, "stale-released");
+  assert.equal(await controlStore.acquire(randomUUID()), false);
+
+  worker.send({ command: "cancel", id: freshRequestId });
+  assert.equal((await waitFor(message =>
+    message.id === freshRequestId && message.kind === "cancelled")).kind, "cancelled");
 });
 
 test("expired owners cannot renew or release a replacement, and capacity mismatches fail closed", async t => {
