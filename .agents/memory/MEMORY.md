@@ -1,3 +1,4 @@
 - [Gemini model availability](gemini-model-availability.md) — keep the model configurable and pace free-tier generation to avoid per-minute 429s.
 - [Faith storytelling](faith-storytelling.md) — Bible-grounded Christianity, with safe space for children's difficult faith questions.
 - [Movie export expectations](movie-export-expectations.md) — user chose storyboard movies now, in both orientations and both resolutions; distinguish them from finished animation.
+- [Intended audience](intended-audience.md) — the user wants creators, parents, video editors, and story animators worldwide to be able to use the product.
