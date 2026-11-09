@@ -584,6 +584,12 @@ components:
       required: [id, episodeId, aspectRatio, quality, status, progress, url, sizeBytes, error, createdAt]
       properties:
         id: { type: integer }
+        requestId:
+          type: ["string", "null"]
+          minLength: 1
+          maxLength: 128
+          pattern: '^[A-Za-z0-9_-]+$'
+          description: Original idempotency key, used to reconcile saved four-format batch progress.
         episodeId: { type: ["integer", "null"] }
         aspectRatio: { type: string, enum: ["16:9", "9:16"] }
         quality: { type: string, enum: ["720p", "1080p"] }

@@ -79,8 +79,9 @@ for (const status of ["queued", "rendering", "ready", "failed", "cancelled"] as 
     assert.equal(recovered.id, original.id);
     assert.equal(recovered.status, status);
     assert.equal(await count(), 1);
-    // The private request key is not part of the public history response.
-    assert.equal("requestId" in recovered, false);
+    // The authenticated studio can reconcile a persisted batch by exact intent,
+    // rather than mistaking another movie with the same format for this request.
+    assert.equal(recovered.requestId, input.requestId);
   });
 }
 
@@ -90,6 +91,17 @@ test("concurrent retries insert exactly one job", async () => {
   const jobs = await Promise.all(responses.map(response => response.json()));
   assert.equal(new Set(jobs.map(job => job.id)).size, 1);
   assert.equal(await count(), 1);
+});
+
+test("saved history includes request keys for reconciliation, and supports older unkeyed exports", async () => {
+  const created = await (await request()).json();
+  const { requestId: _, ...legacy } = input;
+  await request({ ...legacy, quality: "1080p" });
+  const response = await fetch(`${origin}/api/studio/exports`);
+  assert.equal(response.status, 200);
+  const history = await response.json();
+  assert.equal(history.find((job: { id: number }) => job.id === created.id).requestId, input.requestId);
+  assert.equal(history.find((job: { id: number }) => job.id !== created.id).requestId, null);
 });
 
 test("a deliberately new request creates another job even with identical active formats", async () => {

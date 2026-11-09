@@ -919,7 +919,7 @@ function StudioWorkspace({ authUser }: { authUser: AuthUser }) {
   return (
     <WorkspaceFrame view={view} setView={navigateToView} project={project} authUser={authUser} authChecked={authChecked}>
       {renderView()}
-      {view === 'dashboard' && <div className="content-wrap"><MovieExports episodes={episodes} /></div>}
+      {view === 'dashboard' && project && <div className="content-wrap"><MovieExports episodes={episodes} accountId={authUser.id} projectId={project.id} /></div>}
       {showProjectEditor ? (
         <ProjectEditor
           form={projectForm}

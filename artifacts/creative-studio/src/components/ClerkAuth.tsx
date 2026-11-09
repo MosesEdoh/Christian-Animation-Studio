@@ -1,9 +1,10 @@
 import { useEffect, useRef, type ReactNode } from 'react';
-import { ClerkProvider, SignIn, SignUp, useClerk } from '@clerk/react';
+import { ClerkProvider, SignIn, SignUp, useClerk, useUser } from '@clerk/react';
 import { publishableKeyFromHost } from '@clerk/react/internal';
 import { shadcn } from '@clerk/themes';
 import { useLocation } from 'wouter';
 import { useQueryClient } from '@tanstack/react-query';
+import { activateMovieBatchAccount } from '../lib/movieBatchProgress';
 
 const clerkPubKey = publishableKeyFromHost(
   window.location.hostname,
@@ -69,13 +70,19 @@ export function ClerkProviderWithRoutes({ children }: { children: ReactNode }) {
 
 export function ClerkQueryClientCacheInvalidator() {
   const { addListener } = useClerk();
+  const { isLoaded } = useUser();
   const queryClient = useQueryClient();
   const prevUserIdRef = useRef<string | null | undefined>(undefined);
-  useEffect(() => addListener(({ user }) => {
-    const userId = user?.id ?? null;
-    if (prevUserIdRef.current !== undefined && prevUserIdRef.current !== userId) queryClient.clear();
-    prevUserIdRef.current = userId;
-  }), [addListener, queryClient]);
+  useEffect(() => {
+    // An unresolved Clerk session is not a sign-out during a page reload.
+    if (!isLoaded) return;
+    return addListener(({ user }) => {
+      const userId = user?.id ?? null;
+      activateMovieBatchAccount(user?.externalId ?? userId);
+      if (prevUserIdRef.current !== undefined && prevUserIdRef.current !== userId) queryClient.clear();
+      prevUserIdRef.current = userId;
+    });
+  }, [addListener, queryClient, isLoaded]);
   return null;
 }
 export function SignInPage() {

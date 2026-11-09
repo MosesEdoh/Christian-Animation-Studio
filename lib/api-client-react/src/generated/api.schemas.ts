@@ -78,6 +78,14 @@ export const StudioExportStatus = {
 
 export interface StudioExport {
   id: number;
+  /**
+     * Original idempotency key, used to reconcile saved four-format batch progress.
+     * @minLength 1
+     * @maxLength 128
+     * @nullable
+     * @pattern ^[A-Za-z0-9_-]+$
+     */
+  requestId?: string | null;
   /** @nullable */
   episodeId: number | null;
   aspectRatio: StudioExportAspectRatio;

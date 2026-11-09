@@ -23,6 +23,10 @@ export const ListStudioExportsQueryParams = zod.object({
   "limit": zod.coerce.number().int().min(1).max(listStudioExportsQueryLimitMax).default(listStudioExportsQueryLimitDefault)
 })
 
+export const listStudioExportsResponseRequestIdMax = 128;
+
+
+export const listStudioExportsResponseRequestIdRegExp = new RegExp('^[A-Za-z0-9_-]+$');
 export const listStudioExportsResponseSizeBytesMin = 0;
 export const listStudioExportsResponseSizeBytesMax = 9007199254740991;
 
@@ -30,6 +34,7 @@ export const listStudioExportsResponseSizeBytesMax = 9007199254740991;
 
 export const ListStudioExportsResponseItem = zod.object({
   "id": zod.int(),
+  "requestId": zod.string().min(1).max(listStudioExportsResponseRequestIdMax).regex(listStudioExportsResponseRequestIdRegExp).nullish().describe('Original idempotency key, used to reconcile saved four-format batch progress.'),
   "episodeId": zod.int().nullable(),
   "aspectRatio": zod.enum(['16:9', '9:16']),
   "quality": zod.enum(['720p', '1080p']),
@@ -57,6 +62,10 @@ export const CreateStudioExportBody = zod.object({
   "quality": zod.enum(['720p', '1080p'])
 })
 
+export const createStudioExportResponseRequestIdMax = 128;
+
+
+export const createStudioExportResponseRequestIdRegExp = new RegExp('^[A-Za-z0-9_-]+$');
 export const createStudioExportResponseSizeBytesMin = 0;
 export const createStudioExportResponseSizeBytesMax = 9007199254740991;
 
@@ -64,6 +73,7 @@ export const createStudioExportResponseSizeBytesMax = 9007199254740991;
 
 export const CreateStudioExportResponse = zod.object({
   "id": zod.int(),
+  "requestId": zod.string().min(1).max(createStudioExportResponseRequestIdMax).regex(createStudioExportResponseRequestIdRegExp).nullish().describe('Original idempotency key, used to reconcile saved four-format batch progress.'),
   "episodeId": zod.int().nullable(),
   "aspectRatio": zod.enum(['16:9', '9:16']),
   "quality": zod.enum(['720p', '1080p']),
@@ -116,6 +126,10 @@ export const CancelStudioExportParams = zod.object({
   "id": zod.coerce.number().int()
 })
 
+export const cancelStudioExportResponseRequestIdMax = 128;
+
+
+export const cancelStudioExportResponseRequestIdRegExp = new RegExp('^[A-Za-z0-9_-]+$');
 export const cancelStudioExportResponseSizeBytesMin = 0;
 export const cancelStudioExportResponseSizeBytesMax = 9007199254740991;
 
@@ -123,6 +137,7 @@ export const cancelStudioExportResponseSizeBytesMax = 9007199254740991;
 
 export const CancelStudioExportResponse = zod.object({
   "id": zod.int(),
+  "requestId": zod.string().min(1).max(cancelStudioExportResponseRequestIdMax).regex(cancelStudioExportResponseRequestIdRegExp).nullish().describe('Original idempotency key, used to reconcile saved four-format batch progress.'),
   "episodeId": zod.int().nullable(),
   "aspectRatio": zod.enum(['16:9', '9:16']),
   "quality": zod.enum(['720p', '1080p']),

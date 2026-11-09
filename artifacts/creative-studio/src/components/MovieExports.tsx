@@ -1,22 +1,19 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import { getPreflightStudioExportQueryKey, preflightStudioExport, usePreflightStudioExport, useCancelStudioExport, useCreateStudioExport, useDeleteStudioExport, getListStudioExportsQueryKey, type Episode, type StudioExport } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { updateMovieExportCaches, useMovieExportHistory } from '../hooks/useMovieExportHistory';
 import { movieSizeLabel } from '../lib/movieSize';
 import { trackEvent } from '../lib/analytics';
-
-type MovieFormat = { aspectRatio: '16:9' | '9:16'; quality: '720p' | '1080p' };
-type MovieRequest = MovieFormat & { requestId: string };
+import { movieBatchScope, reconcileMovieBatch, subscribeMovieBatches, type MovieBatch, type MovieFormat, type MovieRequest } from '../lib/movieBatchProgress';
 type PreflightOutcome = 'passed' | 'blocked' | 'unavailable';
-type MovieBatch = {
-  episodeId: number | null;
-  label: string;
-  queued: MovieFormat[];
-  remaining: MovieRequest[];
-};
 const formatLabel = (format: MovieFormat) => `${format.aspectRatio} · ${format.quality}`;
 
-export function MovieExports({ episodes }: { episodes: Episode[] }) {
+type MovieExportsProps = { episodes: Episode[]; accountId: string; projectId: number };
+export function MovieExports(props: MovieExportsProps) {
+  return <AccountMovieExports key={`${props.accountId}:${props.projectId}`} {...props} />;
+}
+
+function AccountMovieExports({ episodes, accountId, projectId }: MovieExportsProps) {
   const cache = useQueryClient();
   const [episodeId, setEpisodeId] = useState('series');
   const [aspectRatio, setAspectRatio] = useState<'16:9' | '9:16'>('16:9');
@@ -24,7 +21,13 @@ export function MovieExports({ episodes }: { episodes: Episode[] }) {
   const [error, setError] = useState('');
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [queueing, setQueueing] = useState(false);
-  const [batch, setBatch] = useState<MovieBatch | null>(null);
+  const scope = useMemo(() => movieBatchScope(accountId, projectId), [accountId, projectId]);
+  const batch = useSyncExternalStore(subscribeMovieBatches, scope.get, () => null);
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
   const queueLock = useRef(false);
   // Keep unconfirmed single requests stable until acknowledged. Batch requests
   // carry their own IDs so changing the form cannot change a missing-format retry.
@@ -64,6 +67,14 @@ export function MovieExports({ episodes }: { episodes: Episode[] }) {
     setEpisodeId(value);
   }
   const jobs = useMovieExportHistory();
+  useEffect(() => {
+    if (!batch) return;
+    const reconciled = reconcileMovieBatch(batch, jobs.jobs);
+    if (reconciled !== batch) {
+      try { scope.save(reconciled, batch.id); }
+      catch (cause) { setError((cause as Error).message); }
+    }
+  }, [batch, jobs.jobs, scope]);
   const create = useCreateStudioExport();
   const cancel = useCancelStudioExport();
   const remove = useDeleteStudioExport();
@@ -119,16 +130,19 @@ export function MovieExports({ episodes }: { episodes: Episode[] }) {
       return { ...format, requestId };
     });
     let progress: MovieBatch | null = resume ?? (all ? {
+      id: crypto.randomUUID(),
       episodeId: targetId,
       label: targetId === null ? 'Entire series' : `Episode ${episodes.find(episode => episode.id === targetId)?.number ?? targetId}`,
       queued: [], remaining: formats,
     } : null);
-    if (progress) setBatch(progress);
     let queuedCount = 0;
     try {
+      // Persist all request IDs before sending even the first create request.
+      if (progress) scope.save(progress, resume?.id);
       // Refresh before queueing, including retries of a different selection.
       // Check every orientation before creating any of the batch's jobs.
       for (const ratio of new Set(formats.map(format => format.aspectRatio))) {
+        if (!mounted.current || !scope.current()) return;
         let check;
         try {
           check = await preflightStudioExport({
@@ -151,7 +165,9 @@ export function MovieExports({ episodes }: { episodes: Episode[] }) {
         if (!check.canQueue) { setError(check.message); return; }
       }
       for (const format of formats) {
+        if (!mounted.current || !scope.current()) return;
         await create.mutateAsync({ data: { episodeId: targetId, ...format } });
+        if (!scope.current()) return;
         if (!all && !resume) unconfirmed.current.delete(singleKey);
         trackEvent('movie_queue_succeeded', {
           target: targetId === null ? 'series' : 'episode',
@@ -162,13 +178,13 @@ export function MovieExports({ episodes }: { episodes: Episode[] }) {
         queuedCount++;
         if (progress) {
           progress = { ...progress, queued: [...progress.queued, format], remaining: formats.slice(queuedCount) };
-          setBatch(progress);
+          scope.save(progress, progress.id);
         }
       }
     } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not queue movie.'); }
     finally {
       try {
-        if (queuedCount > 0) await cache.invalidateQueries({ queryKey: getListStudioExportsQueryKey() });
+        if (queuedCount > 0 && scope.current()) await cache.invalidateQueries({ queryKey: getListStudioExportsQueryKey() });
       } catch {
         setError(previous => `${previous} Could not refresh movie exports. Please refresh the list.`.trim());
       } finally {
@@ -203,9 +219,13 @@ export function MovieExports({ episodes }: { episodes: Episode[] }) {
       <p data-testid="movie-batch-missing">Not queued: {batch.remaining.length ? batch.remaining.map(formatLabel).join(', ') : 'None — all four formats are queued'}.</p>
       {batch.remaining.length > 0 && <>
         <p>Queue only the missing formats for {batch.label}. Already queued jobs will not be repeated.</p>
+        <p className="row-caption">Batch progress is saved in this browser. You can leave and return here to queue the remaining formats.</p>
         <button className="btn btn-primary" data-testid="queue-missing-movies" disabled={queueing} onClick={() => queue(false, undefined, batch)}>Queue missing formats</button>
       </>}
-      <button className="btn btn-quiet" data-testid="dismiss-movie-batch" disabled={queueing} onClick={() => setBatch(null)}>Dismiss batch summary</button>
+      <button className="btn btn-quiet" data-testid="dismiss-movie-batch" disabled={queueing} onClick={() => {
+        try { scope.save(null, batch.id); }
+        catch (cause) { setError((cause as Error).message); }
+      }}>Dismiss batch summary</button>
     </div>}
     {jobs.isPending && <p role="status">Loading movie exports…</p>}
     {jobs.isError && !jobs.isFetchNextPageError && <p role="alert">Could not load movie exports. <button onClick={() => jobs.refetch()}>Retry</button></p>}

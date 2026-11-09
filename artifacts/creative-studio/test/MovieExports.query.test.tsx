@@ -90,7 +90,7 @@ afterEach(() => {
 
 function mount() {
   render(<QueryClientProvider client={client}>
-    <MovieExports episodes={[episode]} />
+    <MovieExports episodes={[episode]} accountId="test-account" projectId={1} />
   </QueryClientProvider>);
 }
 

@@ -40,7 +40,7 @@ afterEach(() => vi.restoreAllMocks());
 function mount() {
   const cache = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   cache.setQueryData(['/api/studio/exports'], api.jobs);
-  return { cache, ...render(<QueryClientProvider client={cache}><MovieExports episodes={[episode]} /></QueryClientProvider>) };
+  return { cache, ...render(<QueryClientProvider client={cache}><MovieExports episodes={[episode]} accountId="test-account" projectId={1} /></QueryClientProvider>) };
 }
 it('requires confirmation and does nothing when declined', () => {
   vi.mocked(window.confirm).mockReturnValue(false);

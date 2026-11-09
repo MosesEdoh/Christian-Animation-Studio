@@ -4,6 +4,7 @@ import type { StudioExport, StudioExportInput } from '@workspace/api-client-reac
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MovieExports } from '../src/components/MovieExports';
 import { episode, otherEpisode } from './episodeFixtures';
+import { activateMovieBatchAccount, movieBatchStorageKey } from '../src/lib/movieBatchProgress';
 
 const api = vi.hoisted(() => ({
   create: vi.fn<(variables: { data: StudioExportInput }) => Promise<StudioExport>>(),
@@ -57,7 +58,7 @@ function deferred<T>() {
   return { promise, resolve, reject };
 }
 
-function mount() {
+function mount(accountId = 'test-account', projectId = 1) {
   const cache = new QueryClient({
     defaultOptions: {
       queries: { retry: false, gcTime: Infinity },
@@ -67,7 +68,7 @@ function mount() {
   const invalidate = vi.spyOn(cache, 'invalidateQueries');
   const view = render(
     <QueryClientProvider client={cache}>
-      <MovieExports episodes={[otherEpisode, episode]} />
+      <MovieExports episodes={[otherEpisode, episode]} accountId={accountId} projectId={projectId} />
     </QueryClientProvider>,
   );
   return {
@@ -75,7 +76,7 @@ function mount() {
     invalidate,
     refresh: () => view.rerender(
       <QueryClientProvider client={cache}>
-        <MovieExports episodes={[otherEpisode, episode]} />
+        <MovieExports episodes={[otherEpisode, episode]} accountId={accountId} projectId={projectId} />
       </QueryClientProvider>,
     ),
   };
@@ -567,6 +568,120 @@ describe('MovieExports errors and retries', () => {
     expect(api.create).toHaveBeenCalledExactlyOnceWith({
       data: { episodeId, aspectRatio: '9:16', quality: '1080p', requestId: expect.any(String) },
     });
+  });
+});
+
+describe('MovieExports persistent batch progress', () => {
+  it.each([null, episode.id])('resumes only missing formats for the original target %s after leaving', async target => {
+    api.create.mockResolvedValueOnce(job()).mockRejectedValueOnce(new Error('Queue full.'));
+    const first = mount();
+    if (target !== null) select('Episode or series', String(target));
+    fireEvent.click(buildAll());
+    await screen.findByRole('alert');
+    await waitFor(() => expect(build()).toBeEnabled());
+    const persisted = JSON.parse(localStorage.getItem(movieBatchStorageKey)!);
+    expect(persisted.accountId).toBe('test-account');
+    const missing = persisted.batches['1'].remaining;
+    expect(missing).toHaveLength(3);
+    const confirmedId = api.create.mock.calls[0][0].data.requestId;
+    first.unmount();
+
+    mount();
+    expect(screen.getByTestId('movie-batch-queued')).toHaveTextContent('16:9 · 720p');
+    select('Episode or series', String(otherEpisode.id));
+    select('Orientation', '9:16');
+    select('Resolution', '1080p');
+    fireEvent.click(screen.getByRole('button', { name: 'Queue missing formats' }));
+    await waitFor(() => expect(screen.queryByTestId('queue-missing-movies')).not.toBeInTheDocument());
+    expect(api.create.mock.calls.slice(2).map(([request]) => request.data)).toEqual(
+      missing.map((format: object) => ({ episodeId: target, ...format })),
+    );
+    expect(api.create.mock.calls.slice(2).every(([request]) => request.data.requestId !== confirmedId)).toBe(true);
+  });
+
+  it('reconciles a lost acknowledgement with saved jobs but ignores unrelated matching formats', async () => {
+    api.create.mockResolvedValueOnce(job()).mockRejectedValueOnce(new Error('Response lost.'));
+    const first = mount();
+    fireEvent.click(buildAll());
+    await screen.findByRole('alert');
+    await waitFor(() => expect(build()).toBeEnabled());
+    const unconfirmed = api.create.mock.calls[1][0].data;
+    first.unmount();
+    api.jobs = [
+      job({ ...unconfirmed, id: 12, status: 'failed' }),
+      job({ id: 13, aspectRatio: '9:16', quality: '720p', requestId: crypto.randomUUID() }),
+      // Even the same key must not match another target.
+      job({ ...unconfirmed, id: 14, episodeId: otherEpisode.id }),
+    ];
+    mount();
+    await waitFor(() => expect(screen.getByTestId('movie-batch-queued')).toHaveTextContent('16:9 · 720p, 16:9 · 1080p'));
+    expect(screen.getByTestId('movie-batch-missing')).toHaveTextContent('Not queued: 9:16 · 720p, 9:16 · 1080p.');
+    fireEvent.click(screen.getByTestId('queue-missing-movies'));
+    await waitFor(() => expect(screen.queryByTestId('queue-missing-movies')).not.toBeInTheDocument());
+    expect(api.create.mock.calls.slice(2).map(([request]) => request.data.aspectRatio)).toEqual(['9:16', '9:16']);
+  });
+
+  it('keeps a late acknowledgement after navigation and stops queueing while away', async () => {
+    const pending = deferred<StudioExport>();
+    api.create.mockReturnValueOnce(pending.promise);
+    const first = mount();
+    fireEvent.click(buildAll());
+    await waitFor(() => expect(api.create).toHaveBeenCalledTimes(1));
+    first.unmount();
+    mount();
+    await act(async () => pending.resolve(job()));
+    expect(api.create).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId('movie-batch-queued')).toHaveTextContent('Queued successfully: 16:9 · 720p.');
+    fireEvent.click(screen.getByTestId('queue-missing-movies'));
+    await waitFor(() => expect(api.create).toHaveBeenCalledTimes(4));
+    await waitFor(() => expect(screen.queryByTestId('queue-missing-movies')).not.toBeInTheDocument());
+    expect(new Set(api.create.mock.calls.map(([request]) => request.data.requestId)).size).toBe(4);
+  });
+
+  it('does not restore another project or dismissed progress', async () => {
+    api.create.mockRejectedValueOnce(new Error('Queue full.'));
+    const first = mount();
+    fireEvent.click(buildAll());
+    await screen.findByRole('alert');
+    await waitFor(() => expect(build()).toBeEnabled());
+    first.unmount();
+    const otherProject = mount('test-account', 2);
+    expect(screen.queryByTestId('movie-batch-summary')).not.toBeInTheDocument();
+    otherProject.unmount();
+    const original = mount();
+    expect(screen.getByTestId('movie-batch-summary')).toBeInTheDocument();
+    fireEvent.click(screen.getByTestId('dismiss-movie-batch'));
+    original.unmount();
+    mount();
+    expect(screen.queryByTestId('movie-batch-summary')).not.toBeInTheDocument();
+  });
+
+  it('clears progress on account changes while away and rejects late writes from the previous account', async () => {
+    const pending = deferred<StudioExport>();
+    api.create.mockReturnValueOnce(pending.promise);
+    const first = mount();
+    fireEvent.click(buildAll());
+    await waitFor(() => expect(api.create).toHaveBeenCalledTimes(1));
+    first.unmount();
+    activateMovieBatchAccount('other-account');
+    const other = mount('other-account');
+    expect(screen.queryByTestId('movie-batch-summary')).not.toBeInTheDocument();
+    expect(localStorage.getItem(movieBatchStorageKey)).toBeNull();
+    other.unmount();
+    mount();
+    await act(async () => pending.resolve(job()));
+    expect(screen.queryByTestId('movie-batch-summary')).not.toBeInTheDocument();
+    expect(localStorage.getItem(movieBatchStorageKey)).toBeNull();
+    expect(api.create).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports unavailable browser storage before sending any batch request', async () => {
+    mount();
+    vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('Storage blocked'); });
+    fireEvent.click(buildAll());
+    expect(await screen.findByRole('alert')).toHaveTextContent('Could not save batch progress in this browser.');
+    expect(api.create).not.toHaveBeenCalled();
+    expect(buildAll()).toBeEnabled();
   });
 });
 
