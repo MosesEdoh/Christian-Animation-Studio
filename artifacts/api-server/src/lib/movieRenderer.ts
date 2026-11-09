@@ -1,19 +1,33 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { addAbortSignal } from "node:stream";
 import { mkdtemp, writeFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import sharp, { type OverlayOptions } from "sharp";
-import { and, asc, eq, lt } from "drizzle-orm";
+import { and, asc, eq, lt, inArray } from "drizzle-orm";
 import { db, studioExportsTable, studioProjectsTable, studioEpisodesTable, studioScenesTable, studioShotsTable, studioAssetsTable } from "@workspace/db";
 import { ObjectStorageService } from "./objectStorage";
 import { storePrivateMedia } from "./privateMedia";
 import { logger } from "./logger";
+import { movieImage, runMovieEncoder } from "./movieWork";
 
 type ExportRow = typeof studioExportsTable.$inferSelect;
 let stopping = false;
-let activeChild: ChildProcess | null = null;
+let activeController: AbortController | null = null;
 let activeRender: Promise<void> | null = null;
 let activeJobId: number | null = null;
+const renderingJob = (id: number) => and(eq(studioExportsTable.id, id), eq(studioExportsTable.status, "rendering"));
+const cancelledError = () => new Error("Storyboard movie cancelled");
+
+export async function cancelMovieExport(id: number) {
+  // The status comparison arbitrates completion/cancellation races atomically.
+  const [cancelled] = await db.update(studioExportsTable)
+    .set({ status: "cancelled", progress: 0, error: null, objectPath: null, startedAt: null })
+    .where(and(eq(studioExportsTable.id, id), inArray(studioExportsTable.status, ["queued", "rendering"]))).returning();
+  if (cancelled && activeJobId === id) activeController?.abort(cancelledError());
+  if (cancelled) return cancelled;
+  const [existing] = await db.select().from(studioExportsTable).where(eq(studioExportsTable.id, id));
+  return existing;
+}
 export const exportView = (row: ExportRow) => ({
   ...row, url: row.status === "ready" && row.objectPath ? `/api/studio/exports/${row.id}/file` : null,
 });
@@ -37,9 +51,12 @@ function wrap(text: string, width: number) {
 }
 const seconds = (duration: string) => duration.split(":").reduce((total, part) => total * 60 + Number(part), 0) || 60;
 
-async function render(row: ExportRow) {
+async function render(row: ExportRow, signal: AbortSignal) {
+  signal.throwIfAborted();
   const directory = await mkdtemp(join(tmpdir(), "faith-movie-"));
+  let uploadedPath: string | null = null;
   try {
+    signal.throwIfAborted();
     const [project] = await db.select().from(studioProjectsTable).limit(1);
     const episodes = await db.select().from(studioEpisodesTable).orderBy(asc(studioEpisodesTable.number));
     const selected = row.episodeId ? episodes.filter(episode => episode.id === row.episodeId) : episodes;
@@ -53,10 +70,12 @@ async function render(row: ExportRow) {
     const scale = row.quality === "1080p" ? 1.5 : 1;
     const frames: { label: string; title: string; lines: string[]; image: string | null; seconds: number; shot: string }[] = [];
     for (const episode of selected) {
+      signal.throwIfAborted();
       frames.push({ label: project.title, title: `Episode ${episode.number}: ${episode.title}`, lines: wrap(episode.summary, portrait ? 45 : 43), image: null, seconds: 6, shot: "Silent storyboard movie · review edition" });
       const episodeScenes = scenes.filter(scene => scene.episodeId === episode.id);
       if (!episodeScenes.length) throw new Error("Complete the episode script first");
       for (const scene of episodeScenes) {
+        signal.throwIfAborted();
         const sceneShots = shots.filter(shot => shot.sceneId === scene.id);
         const lines = wrap(scene.content || scene.synopsis, portrait ? 46 : 43);
         const pageSize = portrait ? 18 : 13;
@@ -81,7 +100,7 @@ async function render(row: ExportRow) {
     const concat: string[] = [];
     let duration = 0;
     for (const [index, frame] of frames.entries()) {
-      if (stopping) throw new Error("Studio server is restarting");
+      signal.throwIfAborted();
       const imageBox = portrait ? { left: 35, top: 166, width: 650, height: 365 } : { left: 35, top: 158, width: 570, height: 430 };
       const textLeft = portrait ? 40 : 650;
       const textTop = portrait ? 580 : 183;
@@ -104,42 +123,51 @@ async function render(row: ExportRow) {
       if (frame.image) {
         if (!images.has(frame.image)) {
           const file = await storage.getObjectEntityFile(frame.image);
-          const [buffer] = await file.download();
-          images.set(frame.image, buffer);
+          signal.throwIfAborted();
+          const chunks: Buffer[] = [];
+          for await (const chunk of addAbortSignal(signal, file.createReadStream())) {
+            chunks.push(Buffer.from(chunk));
+          }
+          images.set(frame.image, Buffer.concat(chunks));
         }
-        const input = await sharp(images.get(frame.image)!).rotate().resize(Math.round(imageBox.width * scale), Math.round(imageBox.height * scale), { fit: "contain", background: "#242338" }).png().toBuffer();
+        const image = sharp(images.get(frame.image)!).rotate().resize(Math.round(imageBox.width * scale), Math.round(imageBox.height * scale), { fit: "contain", background: "#242338" }).png();
+        const input = await movieImage(image, () => image.toBuffer(), signal);
         overlays.push({ input, left: Math.round(imageBox.left * scale), top: Math.round(imageBox.top * scale) });
       }
       const filename = `frame-${String(index).padStart(5, "0")}.png`;
-      await sharp(Buffer.from(svg)).composite(overlays).png().toFile(join(directory, filename));
+      const image = sharp(Buffer.from(svg)).composite(overlays).png();
+      await movieImage(image, () => image.toFile(join(directory, filename)), signal);
       concat.push(`file '${filename}'`, `duration ${frame.seconds.toFixed(3)}`);
       duration += frame.seconds;
-      if (index % 6 === 0) await db.update(studioExportsTable).set({ progress: Math.round((index + 1) / frames.length * 45) }).where(eq(studioExportsTable.id, row.id));
+      if (index % 6 === 0) await db.update(studioExportsTable).set({ progress: Math.round((index + 1) / frames.length * 45) }).where(renderingJob(row.id));
     }
     concat.push(`file 'frame-${String(frames.length - 1).padStart(5, "0")}.png'`);
     await writeFile(join(directory, "frames.txt"), concat.join("\n"));
     const output = join(directory, "movie.mp4");
-    await db.update(studioExportsTable).set({ progress: 50 }).where(eq(studioExportsTable.id, row.id));
-    await new Promise<void>((resolve, reject) => {
-      const process = spawn("ffmpeg", [
+    signal.throwIfAborted();
+    await db.update(studioExportsTable).set({ progress: 50 }).where(renderingJob(row.id));
+    signal.throwIfAborted();
+    await runMovieEncoder([
         "-hide_banner", "-loglevel", "error", "-y", "-f", "concat", "-safe", "0", "-i", join(directory, "frames.txt"),
         "-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100",
         "-t", duration.toFixed(3), "-vf", "fps=2,format=yuv420p", "-c:v", "libx264", "-preset", "ultrafast",
         "-crf", "23", "-threads", "2", "-c:a", "aac", "-b:a", "32k", "-movflags", "+faststart",
         "-metadata", "title=Frame & Faith — Silent storyboard review movie", output,
-      ], { stdio: ["ignore", "ignore", "pipe"] });
-      activeChild = process;
-      let stderr = "";
-      const timeout = setTimeout(() => { process.kill("SIGKILL"); reject(new Error("Movie rendering timed out")); }, 20 * 60_000);
-      process.stderr.on("data", data => { stderr = (stderr + data.toString()).slice(-4000); });
-      process.on("error", error => { clearTimeout(timeout); reject(error); });
-      process.on("close", code => { activeChild = null; clearTimeout(timeout); code === 0 ? resolve() : reject(new Error(`FFmpeg failed: ${stderr}`)); });
-    });
-    await db.update(studioExportsTable).set({ progress: 90 }).where(eq(studioExportsTable.id, row.id));
-    const objectPath = await storePrivateMedia(output);
-    if (stopping) throw new Error("Studio server is restarting");
-    await db.update(studioExportsTable).set({ status: "ready", progress: 100, objectPath, error: null }).where(eq(studioExportsTable.id, row.id));
-  } finally { await rm(directory, { recursive: true, force: true }); }
+      ], signal);
+    signal.throwIfAborted();
+    await db.update(studioExportsTable).set({ progress: 90 }).where(renderingJob(row.id));
+    uploadedPath = await storePrivateMedia(output, "mp4", "video/mp4", signal);
+    signal.throwIfAborted();
+    const [saved] = await db.update(studioExportsTable).set({ status: "ready", progress: 100, objectPath: uploadedPath, error: null }).where(renderingJob(row.id)).returning();
+    if (saved) uploadedPath = null;
+  } finally {
+    try {
+      if (uploadedPath) {
+        const file = await new ObjectStorageService().getObjectEntityFile(uploadedPath);
+        await file.delete({ ignoreNotFound: true });
+      }
+    } finally { await rm(directory, { recursive: true, force: true }); }
+  }
 }
 
 let running = false;
@@ -158,14 +186,35 @@ export async function wakeMovieWorker() {
         .where(and(eq(studioExportsTable.id, candidate.id), eq(studioExportsTable.status, "queued"))).returning();
       if (!job) continue;
       activeJobId = job.id;
-      try { activeRender = render(job); await activeRender; }
+      const controller = new AbortController();
+      activeController = controller;
+      // Also observe cancellation accepted by another server process.
+      let checking = false;
+      const checkCancellation = async () => {
+        if (checking || controller.signal.aborted) return;
+        checking = true;
+        try {
+          const [current] = await db.select().from(studioExportsTable).where(eq(studioExportsTable.id, job.id));
+          if (!current || current.status !== "rendering") controller.abort(cancelledError());
+        } catch (error) {
+          logger.warn({ err: error, exportId: job.id }, "Could not check movie cancellation");
+        } finally { checking = false; }
+      };
+      const poll = setInterval(() => { void checkCancellation(); }, 500);
+      try {
+        activeRender = (async () => {
+          await checkCancellation();
+          await render(job, controller.signal);
+        })();
+        await activeRender;
+      }
       catch (error) {
-        if (!stopping) logger.error({ err: error, exportId: job.id }, "Storyboard movie failed");
+        if (!stopping && !controller.signal.aborted) logger.error({ err: error, exportId: job.id }, "Storyboard movie failed");
         await db.update(studioExportsTable).set(stopping
           ? { status: "queued", progress: 0, startedAt: null, error: null }
-          : { status: "failed", error: "Movie could not be built. Check references and try building again." }).where(eq(studioExportsTable.id, job.id));
+          : { status: "failed", error: "Movie could not be built. Check references and try building again." }).where(renderingJob(job.id));
       }
-      finally { activeRender = null; activeJobId = null; }
+      finally { clearInterval(poll); activeController = null; activeRender = null; activeJobId = null; }
     }
   } catch (error) { logger.error({ err: error }, "Movie worker failed"); }
   finally { running = false; }
@@ -174,7 +223,7 @@ export async function wakeMovieWorker() {
 export async function stopMovieWorker() {
   stopping = true;
   const jobId = activeJobId;
-  activeChild?.kill("SIGTERM");
+  activeController?.abort(new Error("Studio server is restarting"));
   await activeRender?.catch(() => {});
   if (jobId) await db.update(studioExportsTable).set({ status: "queued", progress: 0, startedAt: null })
     .where(and(eq(studioExportsTable.id, jobId), eq(studioExportsTable.status, "rendering")));

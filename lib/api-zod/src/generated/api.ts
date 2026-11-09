@@ -38,7 +38,7 @@ export const ListStudioExportsResponseItem = zod.object({
   "episodeId": zod.int().nullable(),
   "aspectRatio": zod.enum(['16:9', '9:16']),
   "quality": zod.enum(['720p', '1080p']),
-  "status": zod.enum(['queued', 'rendering', 'ready', 'failed']),
+  "status": zod.enum(['queued', 'rendering', 'ready', 'failed', 'cancelled']),
   "progress": zod.int(),
   "url": zod.string().nullable(),
   "error": zod.string().nullable(),
@@ -61,7 +61,27 @@ export const CreateStudioExportResponse = zod.object({
   "episodeId": zod.int().nullable(),
   "aspectRatio": zod.enum(['16:9', '9:16']),
   "quality": zod.enum(['720p', '1080p']),
-  "status": zod.enum(['queued', 'rendering', 'ready', 'failed']),
+  "status": zod.enum(['queued', 'rendering', 'ready', 'failed', 'cancelled']),
+  "progress": zod.int(),
+  "url": zod.string().nullable(),
+  "error": zod.string().nullable(),
+  "createdAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Cancel a queued or rendering storyboard movie
+ */
+export const CancelStudioExportParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const CancelStudioExportResponse = zod.object({
+  "id": zod.int(),
+  "episodeId": zod.int().nullable(),
+  "aspectRatio": zod.enum(['16:9', '9:16']),
+  "quality": zod.enum(['720p', '1080p']),
+  "status": zod.enum(['queued', 'rendering', 'ready', 'failed', 'cancelled']),
   "progress": zod.int(),
   "url": zod.string().nullable(),
   "error": zod.string().nullable(),

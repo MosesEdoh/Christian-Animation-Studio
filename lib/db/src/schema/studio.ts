@@ -98,7 +98,7 @@ export const studioExportsTable = pgTable("studio_exports", {
   episodeId: integer("episode_id"),
   aspectRatio: text("aspect_ratio").notNull(),
   quality: text("quality").notNull(),
-  status: text("status").notNull().default("queued"),
+  status: text("status", { enum: ["queued", "rendering", "ready", "failed", "cancelled"] }).notNull().default("queued"),
   progress: integer("progress").notNull().default(0),
   objectPath: text("object_path"),
   error: text("error"),

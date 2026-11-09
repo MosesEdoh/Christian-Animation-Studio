@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useCreateStudioExport, useListStudioExports, getListStudioExportsQueryKey, type Episode } from '@workspace/api-client-react';
+import { useCancelStudioExport, useCreateStudioExport, useListStudioExports, getListStudioExportsQueryKey, type Episode, type StudioExport } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
 
 export function MovieExports({ episodes }: { episodes: Episode[] }) {
@@ -11,6 +11,22 @@ export function MovieExports({ episodes }: { episodes: Episode[] }) {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const jobs = useListStudioExports({ query: { queryKey: getListStudioExportsQueryKey(), refetchInterval: 3000 } });
   const create = useCreateStudioExport();
+  const cancel = useCancelStudioExport();
+  const [cancellingId, setCancellingId] = useState<number | null>(null);
+  async function cancelJob(id: number) {
+    setError('');
+    setCancellingId(id);
+    try {
+      const cancelled = await cancel.mutateAsync({ id });
+      cache.setQueryData<StudioExport[]>(getListStudioExportsQueryKey(), previous =>
+        previous?.map(job => job.id === id ? cancelled : job));
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not cancel movie.');
+    } finally {
+      setCancellingId(null);
+      await cache.invalidateQueries({ queryKey: getListStudioExportsQueryKey() });
+    }
+  }
   const ready = (jobs.data ?? []).filter(job => job.status === 'ready' && job.url);
   const selected = ready.find(job => job.id === selectedId) ?? ready[0];
   async function queue(all: boolean, retry?: { episodeId: number | null; aspectRatio: '16:9' | '9:16'; quality: '720p' | '1080p' }) {
@@ -49,7 +65,8 @@ export function MovieExports({ episodes }: { episodes: Episode[] }) {
     <div style={{ marginTop: 16 }} aria-live="polite">
       {(jobs.data ?? []).slice(0, 16).map(job => <p key={job.id} data-testid={`movie-job-${job.id}`}>
         #{job.id} · {job.episodeId ? `Episode ${episodes.find(episode => episode.id === job.episodeId)?.number ?? job.episodeId}` : 'Entire series'} · {job.aspectRatio} · {job.quality} — {job.status}{job.status === 'rendering' ? ` ${job.progress}%` : ''}
-        {job.status === 'failed' && <> · {job.error} <button disabled={create.isPending} onClick={() => queue(false, job)}>Build again</button></>}
+        {(job.status === 'queued' || job.status === 'rendering') && <> · <button disabled={cancellingId !== null} data-testid={`cancel-movie-${job.id}`} onClick={() => cancelJob(job.id)}>{cancellingId === job.id ? 'Cancelling…' : 'Cancel movie'}</button></>}
+        {(job.status === 'failed' || job.status === 'cancelled') && <> · {job.status === 'cancelled' ? 'Cancelled. No movie was saved.' : job.error} <button disabled={create.isPending} onClick={() => queue(false, job)}>Build again</button></>}
       </p>)}
     </div>
   </section>;

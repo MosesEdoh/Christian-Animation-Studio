@@ -14,4 +14,5 @@ export const StudioExportStatus = {
   rendering: 'rendering',
   ready: 'ready',
   failed: 'failed',
+  cancelled: 'cancelled',
 } as const;

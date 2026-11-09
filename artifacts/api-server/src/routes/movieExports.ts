@@ -1,8 +1,8 @@
 import { Router } from "express";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { db, studioExportsTable, studioEpisodesTable } from "@workspace/db";
-import { CreateStudioExportBody, CreateStudioExportResponse, ListStudioExportsResponse, DownloadStudioExportParams } from "@workspace/api-zod";
-import { exportView, wakeMovieWorker } from "../lib/movieRenderer";
+import { CreateStudioExportBody, CreateStudioExportResponse, ListStudioExportsResponse, DownloadStudioExportParams, CancelStudioExportParams, CancelStudioExportResponse } from "@workspace/api-zod";
+import { cancelMovieExport, exportView, wakeMovieWorker } from "../lib/movieRenderer";
 import { ObjectStorageService } from "../lib/objectStorage";
 import { streamPrivateMedia } from "../lib/privateMedia";
 
@@ -25,6 +25,14 @@ router.post("/studio/exports", async (req, res): Promise<void> => {
   const [job] = await db.insert(studioExportsTable).values({ ...parsed.data, status: "queued" }).returning();
   res.status(202).json(CreateStudioExportResponse.parse(exportView(job!)));
   void wakeMovieWorker();
+});
+router.post("/studio/exports/:id/cancel", async (req, res): Promise<void> => {
+  const parsed = CancelStudioExportParams.safeParse(req.params);
+  if (!parsed.success) { res.status(400).json({ error: "Invalid movie ID" }); return; }
+  const job = await cancelMovieExport(parsed.data.id);
+  if (!job) { res.status(404).json({ error: "Movie not found" }); return; }
+  if (job.status !== "cancelled") { res.status(409).json({ error: "This movie has already finished and cannot be cancelled." }); return; }
+  res.json(CancelStudioExportResponse.parse(exportView(job)));
 });
 router.get("/studio/exports/:id/file", async (req, res): Promise<void> => {
   const parsed = DownloadStudioExportParams.safeParse(req.params);

@@ -394,6 +394,80 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       return useMutation(getCreateStudioExportMutationOptions(options));
     }
 
+export const getCancelStudioExportUrl = (id: number,) => {
+
+
+
+
+  return `/api/studio/exports/${id}/cancel`
+}
+
+/**
+ * @summary Cancel a queued or rendering storyboard movie
+ */
+export const cancelStudioExport = async (id: number, options?: Parameters<typeof customFetch>[1]): Promise<StudioExport> => {
+
+  return customFetch<StudioExport>(getCancelStudioExportUrl(id),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getCancelStudioExportMutationKey = () => ['cancelStudioExport'] as const;
+
+export const getCancelStudioExportMutationOptions = <TError = ErrorType<ErrorEnvelope>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelStudioExport>>, TError,CancelStudioExportMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof cancelStudioExport>>, TError,CancelStudioExportMutationVariables, TContext> => {
+
+const mutationKey = getCancelStudioExportMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof cancelStudioExport>>, CancelStudioExportMutationVariables> = (props) => {
+          const {id} = props ?? {};
+
+          return  cancelStudioExport(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CancelStudioExportMutationResult = NonNullable<Awaited<ReturnType<typeof cancelStudioExport>>>
+
+    export type CancelStudioExportMutationError = ErrorType<ErrorEnvelope>
+    export type CancelStudioExportMutationVariables = {id: number}
+
+    /**
+ * @summary Cancel a queued or rendering storyboard movie
+ */
+export const useCancelStudioExport = <TError = ErrorType<ErrorEnvelope>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof cancelStudioExport>>, TError,CancelStudioExportMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof cancelStudioExport>>,
+        TError,
+        CancelStudioExportMutationVariables,
+        TContext
+      > => {
+      return useMutation(getCancelStudioExportMutationOptions(options));
+    }
+
 export const getDownloadStudioExportUrl = (id: number,) => {
 
 

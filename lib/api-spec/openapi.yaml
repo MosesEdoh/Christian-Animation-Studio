@@ -70,6 +70,34 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/StudioExport" }
+  /studio/exports/{id}/cancel:
+    post:
+      operationId: cancelStudioExport
+      tags: [studio]
+      summary: Cancel a queued or rendering storyboard movie
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Cancelled movie (also returned for repeated cancellation)
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StudioExport" }
+        "400":
+          description: Invalid movie ID
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "404":
+          description: Movie not found
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "409":
+          description: A ready or failed movie cannot be cancelled
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
   /studio/exports/{id}/file:
     get:
       operationId: downloadStudioExport
@@ -556,7 +584,7 @@ components:
         episodeId: { type: ["integer", "null"] }
         aspectRatio: { type: string, enum: ["16:9", "9:16"] }
         quality: { type: string, enum: ["720p", "1080p"] }
-        status: { type: string, enum: [queued, rendering, ready, failed] }
+        status: { type: string, enum: [queued, rendering, ready, failed, cancelled] }
         progress: { type: integer }
         url: { type: ["string", "null"] }
         error: { type: ["string", "null"] }
