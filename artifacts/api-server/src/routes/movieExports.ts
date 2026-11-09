@@ -1,9 +1,9 @@
 import { Router } from "express";
 import { and, desc, eq, inArray } from "drizzle-orm";
 import { db, studioExportsTable, studioEpisodesTable } from "@workspace/db";
-import { CreateStudioExportBody, CreateStudioExportResponse, ListStudioExportsResponse, DownloadStudioExportParams, CancelStudioExportParams, CancelStudioExportResponse } from "@workspace/api-zod";
+import { CreateStudioExportBody, CreateStudioExportResponse, ListStudioExportsResponse, DownloadStudioExportParams, CancelStudioExportParams, CancelStudioExportResponse, DeleteStudioExportParams } from "@workspace/api-zod";
 import { cancelMovieExport, exportView, wakeMovieWorker } from "../lib/movieRenderer";
-import { ObjectStorageService } from "../lib/objectStorage";
+import { ObjectNotFoundError, ObjectStorageService } from "../lib/objectStorage";
 import { streamPrivateMedia } from "../lib/privateMedia";
 
 const router = Router();
@@ -25,6 +25,35 @@ router.post("/studio/exports", async (req, res): Promise<void> => {
   const [job] = await db.insert(studioExportsTable).values({ ...parsed.data, status: "queued" }).returning();
   res.status(202).json(CreateStudioExportResponse.parse(exportView(job!)));
   void wakeMovieWorker();
+});
+router.delete("/studio/exports/:id", async (req, res): Promise<void> => {
+  // The parent router protects all /studio routes with requireStudioAccess.
+  const parsed = DeleteStudioExportParams.safeParse(req.params);
+  if (!parsed.success) { res.status(400).json({ error: "Invalid movie ID" }); return; }
+  const [job] = await db.select().from(studioExportsTable).where(eq(studioExportsTable.id, parsed.data.id));
+  if (!job) { res.sendStatus(204); return; }
+  const finished = ["ready", "failed", "cancelled"] as const;
+  if (!finished.some(status => status === job.status)) {
+    res.status(409).json({ error: "Cancel this active movie before deleting it." }); return;
+  }
+  // Storage first: a failed object deletion must leave a retryable history entry.
+  // If the DB delete fails afterwards, a retry tolerates the now-missing object.
+  if (job.objectPath) {
+    try {
+      const file = await new ObjectStorageService().getObjectEntityFile(job.objectPath);
+      await file.delete({ ignoreNotFound: true });
+    } catch (error) {
+      if (!(error instanceof ObjectNotFoundError) &&
+          !(typeof error === "object" && error !== null && "code" in error && error.code === 404)) {
+        req.log.error({ err: error, exportId: job.id }, "Movie deletion failed");
+        res.status(503).json({ error: "Could not delete the stored movie. Its history was kept; please try again." }); return;
+      }
+    }
+  }
+  await db.delete(studioExportsTable).where(and(
+    eq(studioExportsTable.id, job.id), inArray(studioExportsTable.status, [...finished]),
+  ));
+  res.sendStatus(204);
 });
 router.post("/studio/exports/:id/cancel", async (req, res): Promise<void> => {
   const parsed = CancelStudioExportParams.safeParse(req.params);

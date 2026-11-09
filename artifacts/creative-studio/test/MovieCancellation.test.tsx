@@ -12,6 +12,7 @@ vi.mock('@workspace/api-client-react', async importOriginal => ({
   useListStudioExports: () => ({ data: api.jobs, isError: false }),
   useCreateStudioExport: () => ({ mutateAsync: api.create, isPending: false }),
   useCancelStudioExport: () => ({ mutateAsync: api.cancel }),
+  useDeleteStudioExport: () => ({ mutateAsync: vi.fn() }),
 }));
 const job = (status: string) => ({
   id: 3, episodeId: episode.id, status, aspectRatio: '9:16', quality: '1080p',

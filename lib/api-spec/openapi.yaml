@@ -70,6 +70,39 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/StudioExport" }
+  /studio/exports/{id}:
+    delete:
+      operationId: deleteStudioExport
+      tags: [studio]
+      summary: Permanently delete a finished storyboard movie and its history
+      description: Requires approved studio access. Deletes ready, failed, or cancelled exports only. Deletes the stored MP4 before history; storage errors retain history for retry. A missing object or already removed export is a successful no-op.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, minimum: 1, maximum: 2147483647 }
+      responses:
+        "204":
+          description: Movie and history removed, or already absent
+        "400":
+          description: Invalid movie ID
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "401":
+          description: Sign-in required
+        "403":
+          description: Studio access required
+        "409":
+          description: Active movies must be cancelled, not deleted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "503":
+          description: Storage deletion failed; history retained for retry
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
   /studio/exports/{id}/cancel:
     post:
       operationId: cancelStudioExport

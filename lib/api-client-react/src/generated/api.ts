@@ -394,6 +394,81 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       return useMutation(getCreateStudioExportMutationOptions(options));
     }
 
+export const getDeleteStudioExportUrl = (id: number,) => {
+
+
+
+
+  return `/api/studio/exports/${id}`
+}
+
+/**
+ * Requires approved studio access. Deletes ready, failed, or cancelled exports only. Deletes the stored MP4 before history; storage errors retain history for retry. A missing object or already removed export is a successful no-op.
+ * @summary Permanently delete a finished storyboard movie and its history
+ */
+export const deleteStudioExport = async (id: number, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
+
+  return customFetch<void>(getDeleteStudioExportUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteStudioExportMutationKey = () => ['deleteStudioExport'] as const;
+
+export const getDeleteStudioExportMutationOptions = <TError = ErrorType<ErrorEnvelope | void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteStudioExport>>, TError,DeleteStudioExportMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteStudioExport>>, TError,DeleteStudioExportMutationVariables, TContext> => {
+
+const mutationKey = getDeleteStudioExportMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteStudioExport>>, DeleteStudioExportMutationVariables> = (props) => {
+          const {id} = props ?? {};
+
+          return  deleteStudioExport(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteStudioExportMutationResult = NonNullable<Awaited<ReturnType<typeof deleteStudioExport>>>
+
+    export type DeleteStudioExportMutationError = ErrorType<ErrorEnvelope | void>
+    export type DeleteStudioExportMutationVariables = {id: number}
+
+    /**
+ * @summary Permanently delete a finished storyboard movie and its history
+ */
+export const useDeleteStudioExport = <TError = ErrorType<ErrorEnvelope | void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteStudioExport>>, TError,DeleteStudioExportMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteStudioExport>>,
+        TError,
+        DeleteStudioExportMutationVariables,
+        TContext
+      > => {
+      return useMutation(getDeleteStudioExportMutationOptions(options));
+    }
+
 export const getCancelStudioExportUrl = (id: number,) => {
 
 

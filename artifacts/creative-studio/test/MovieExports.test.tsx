@@ -24,6 +24,7 @@ vi.mock('@workspace/api-client-react', async () => {
       mutationFn: (variables: { data: StudioExportInput }) => api.create(variables),
     }),
     useCancelStudioExport: () => ({ mutateAsync: vi.fn() }),
+    useDeleteStudioExport: () => ({ mutateAsync: vi.fn() }),
   };
 });
 

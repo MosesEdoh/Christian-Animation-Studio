@@ -70,6 +70,21 @@ export const CreateStudioExportResponse = zod.object({
 
 
 /**
+ * Requires approved studio access. Deletes ready, failed, or cancelled exports only. Deletes the stored MP4 before history; storage errors retain history for retry. A missing object or already removed export is a successful no-op.
+ * @summary Permanently delete a finished storyboard movie and its history
+ */
+export const deleteStudioExportPathIdMax = 2147483647;
+
+
+
+export const DeleteStudioExportParams = zod.object({
+  "id": zod.coerce.number().int().min(1).max(deleteStudioExportPathIdMax)
+})
+
+export const DeleteStudioExportResponse = zod.void()
+
+
+/**
  * @summary Cancel a queued or rendering storyboard movie
  */
 export const CancelStudioExportParams = zod.object({

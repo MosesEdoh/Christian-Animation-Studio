@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useCancelStudioExport, useCreateStudioExport, useListStudioExports, getListStudioExportsQueryKey, type Episode, type StudioExport } from '@workspace/api-client-react';
+import { useCancelStudioExport, useCreateStudioExport, useDeleteStudioExport, useListStudioExports, getListStudioExportsQueryKey, type Episode, type StudioExport } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
 
 export function MovieExports({ episodes }: { episodes: Episode[] }) {
@@ -12,6 +12,26 @@ export function MovieExports({ episodes }: { episodes: Episode[] }) {
   const jobs = useListStudioExports({ query: { queryKey: getListStudioExportsQueryKey(), refetchInterval: 3000 } });
   const create = useCreateStudioExport();
   const cancel = useCancelStudioExport();
+  const remove = useDeleteStudioExport();
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+  async function deleteJob(job: StudioExport) {
+    if (!window.confirm(`Permanently delete storyboard movie #${job.id} (${job.aspectRatio}, ${job.quality}) and its export history? This frees saved movie storage and cannot be undone. Your scripts and storyboard references will not be deleted.`)) return;
+    setError('');
+    setDeletingId(job.id);
+    try {
+      await remove.mutateAsync({ id: job.id });
+      // Stop an older polling response from reintroducing the removed preview.
+      await cache.cancelQueries({ queryKey: getListStudioExportsQueryKey() });
+      cache.setQueryData<StudioExport[]>(getListStudioExportsQueryKey(), previous =>
+        previous?.filter(saved => saved.id !== job.id));
+      setSelectedId(previous => previous === job.id ? null : previous);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Could not delete movie. Please try again.');
+    } finally {
+      setDeletingId(null);
+      await cache.invalidateQueries({ queryKey: getListStudioExportsQueryKey() });
+    }
+  }
   const [cancellingId, setCancellingId] = useState<number | null>(null);
   async function cancelJob(id: number) {
     setError('');
@@ -63,10 +83,11 @@ export function MovieExports({ episodes }: { episodes: Episode[] }) {
       <a className="btn btn-primary" href={selected.url} download={`storyboard-${selected.id}-${selected.quality}.mp4`} data-testid="download-movie">Download MP4</a>
     </div>}
     <div style={{ marginTop: 16 }} aria-live="polite">
-      {(jobs.data ?? []).slice(0, 16).map(job => <p key={job.id} data-testid={`movie-job-${job.id}`}>
+      {(jobs.data ?? []).map(job => <p key={job.id} data-testid={`movie-job-${job.id}`}>
         #{job.id} · {job.episodeId ? `Episode ${episodes.find(episode => episode.id === job.episodeId)?.number ?? job.episodeId}` : 'Entire series'} · {job.aspectRatio} · {job.quality} — {job.status}{job.status === 'rendering' ? ` ${job.progress}%` : ''}
         {(job.status === 'queued' || job.status === 'rendering') && <> · <button disabled={cancellingId !== null} data-testid={`cancel-movie-${job.id}`} onClick={() => cancelJob(job.id)}>{cancellingId === job.id ? 'Cancelling…' : 'Cancel movie'}</button></>}
         {(job.status === 'failed' || job.status === 'cancelled') && <> · {job.status === 'cancelled' ? 'Cancelled. No movie was saved.' : job.error} <button disabled={create.isPending} onClick={() => queue(false, job)}>Build again</button></>}
+        {(['ready', 'failed', 'cancelled'] as const).some(status => status === job.status) && <> · <button disabled={deletingId !== null} data-testid={`delete-movie-${job.id}`} onClick={() => deleteJob(job)}>{deletingId === job.id ? 'Deleting…' : 'Delete movie'}</button></>}
       </p>)}
     </div>
   </section>;
