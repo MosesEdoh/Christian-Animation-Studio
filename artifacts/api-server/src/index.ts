@@ -1,6 +1,6 @@
 import app from "./app";
 import { logger } from "./lib/logger";
-import { wakeMovieWorker, stopMovieWorker } from "./lib/movieRenderer";
+import { wakeMovieWorker, stopMovieWorker, startMovieTemporaryRecovery } from "./lib/movieRenderer";
 
 const rawPort = process.env["PORT"];
 
@@ -23,6 +23,7 @@ const server = app.listen(port, (err) => {
   }
 
   logger.info({ port }, "Server listening");
+  startMovieTemporaryRecovery();
   void wakeMovieWorker();
   setInterval(() => { void wakeMovieWorker(); }, 10_000).unref();
 });

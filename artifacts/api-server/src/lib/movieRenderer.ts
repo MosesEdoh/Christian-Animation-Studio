@@ -1,5 +1,4 @@
-import { mkdtemp, writeFile, rm, stat } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import sharp, { type OverlayOptions } from "sharp";
 import { and, asc, eq, lt, inArray, sql } from "drizzle-orm";
@@ -9,8 +8,28 @@ import { storePrivateMedia } from "./privateMedia";
 import { logger } from "./logger";
 import { movieImage, runMovieEncoder } from "./movieWork";
 import { MovieBudget, MovieBudgetError, movieLimits, movieLookup, movieOperation, smallerMovie } from "./movieBudget";
+import { MovieTemporaryStorage, MOVIE_RENDER_LEASE_MS } from "./movieTemporaryStorage";
 
 export const movieDb = createBoundedDatabase();
+const temporaryStorage = new MovieTemporaryStorage();
+let recoveryTimer: NodeJS.Timeout | undefined;
+
+export function startMovieTemporaryRecovery() {
+  if (recoveryTimer || stopping) return;
+  const recover = async () => {
+    try {
+      const removed = await temporaryStorage.recover((err, directory) => {
+        logger.warn({ err, directory }, "Could not recover temporary movie directory");
+      });
+      if (removed) logger.info({ removed }, "Recovered abandoned temporary movie directories");
+    } catch (err) {
+      logger.warn({ err }, "Could not scan temporary movie directories");
+    }
+  };
+  void recover();
+  recoveryTimer = setInterval(() => { void recover(); }, 5 * 60_000);
+  recoveryTimer.unref();
+}
 
 type ExportRow = typeof studioExportsTable.$inferSelect;
 let stopping = false;
@@ -59,7 +78,7 @@ const seconds = (duration: string) => duration.split(":").reduce((total, part) =
 async function render(row: ExportRow, budget: MovieBudget) {
   const signal = budget.signal;
   signal.throwIfAborted();
-  const directory = await mkdtemp(join(tmpdir(), "faith-movie-"));
+  const directory = await temporaryStorage.create();
   let uploadedPath: string | null = null;
   try {
     signal.throwIfAborted();
@@ -217,7 +236,7 @@ async function render(row: ExportRow, budget: MovieBudget) {
         const file = await movieOperation(new ObjectStorageService().getObjectEntityFile(uploadedPath));
         await movieOperation(file.delete({ ignoreNotFound: true }));
       }
-    } finally { await rm(directory, { recursive: true, force: true }); }
+    } finally { await temporaryStorage.remove(directory); }
   }
 }
 
@@ -228,7 +247,7 @@ export async function wakeMovieWorker() {
   try {
     // The whole render has a twenty-minute budget, below the recovery lease.
     await movieOperation(movieDb.update(studioExportsTable).set({ status: "queued", progress: 0 })
-      .where(and(eq(studioExportsTable.status, "rendering"), lt(studioExportsTable.startedAt, new Date(Date.now() - 30 * 60_000)))));
+      .where(and(eq(studioExportsTable.status, "rendering"), lt(studioExportsTable.startedAt, new Date(Date.now() - MOVIE_RENDER_LEASE_MS)))));
     while (!stopping) {
       const [candidate] = await movieOperation(movieDb.select().from(studioExportsTable).where(eq(studioExportsTable.status, "queued")).orderBy(asc(studioExportsTable.id)).limit(1));
       if (!candidate) break;
@@ -281,6 +300,8 @@ export async function wakeMovieWorker() {
 
 export async function stopMovieWorker() {
   stopping = true;
+  clearInterval(recoveryTimer);
+  recoveryTimer = undefined;
   const jobId = activeJobId;
   activeController?.abort(new Error("Studio server is restarting"));
   await activeRender?.catch(() => {});

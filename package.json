@@ -3,6 +3,7 @@
   "version": "0.0.0",
   "license": "MIT",
   "scripts": {
+    "test:movie-temporary-storage": "pnpm --filter @workspace/api-server exec tsx --test test/movieTemporaryStorage.test.ts",
     "test:episode-admission": "pnpm --filter @workspace/api-server exec tsx --test test/episodeExportAdmission.test.ts",
     "test:movie-exports": "pnpm --filter @workspace/api-server exec tsx --test test/movieCancellation.test.ts test/movieBudget.test.ts test/movieDeletion.test.ts && pnpm --filter @workspace/creative-studio exec vitest run --config vitest.config.ts MovieCancellation MovieDeletion MovieExports",
     "test:episode-exports": "pnpm --filter @workspace/api-server exec tsx --test test/episodeVideo.test.ts ../../artifacts/creative-studio/test/seriesPackage.test.ts ../../artifacts/creative-studio/test/episodeDownload.test.ts && pnpm --filter @workspace/creative-studio run test:components",
