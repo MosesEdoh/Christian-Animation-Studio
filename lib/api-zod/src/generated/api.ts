@@ -18,7 +18,7 @@ export const exchangeMobileAuthorizationCodeBodyCodeVerifierMin = 32;
 export const ExchangeMobileAuthorizationCodeBody = zod.object({
   "code": zod.string().min(1),
   "code_verifier": zod.string().min(exchangeMobileAuthorizationCodeBodyCodeVerifierMin),
-  "redirect_uri": zod.string().url(),
+  "redirect_uri": zod.url(),
   "state": zod.string().min(1),
   "nonce": zod.string().min(1)
 })
@@ -34,12 +34,12 @@ export const LogoutMobileSessionResponse = zod.object({
 
 
 export const ListStudioExportsResponseItem = zod.object({
-  "id": zod.number().int(),
-  "episodeId": zod.number().int().nullable(),
+  "id": zod.int(),
+  "episodeId": zod.int().nullable(),
   "aspectRatio": zod.enum(['16:9', '9:16']),
   "quality": zod.enum(['720p', '1080p']),
   "status": zod.enum(['queued', 'rendering', 'ready', 'failed']),
-  "progress": zod.number().int(),
+  "progress": zod.int(),
   "url": zod.string().nullable(),
   "error": zod.string().nullable(),
   "createdAt": zod.coerce.date()
@@ -51,18 +51,18 @@ export const ListStudioExportsResponse = zod.array(ListStudioExportsResponseItem
 
 
 export const CreateStudioExportBody = zod.object({
-  "episodeId": zod.number().int().min(1).nullable(),
+  "episodeId": zod.int().min(1).nullable(),
   "aspectRatio": zod.enum(['16:9', '9:16']),
   "quality": zod.enum(['720p', '1080p'])
 })
 
 export const CreateStudioExportResponse = zod.object({
-  "id": zod.number().int(),
-  "episodeId": zod.number().int().nullable(),
+  "id": zod.int(),
+  "episodeId": zod.int().nullable(),
   "aspectRatio": zod.enum(['16:9', '9:16']),
   "quality": zod.enum(['720p', '1080p']),
   "status": zod.enum(['queued', 'rendering', 'ready', 'failed']),
-  "progress": zod.number().int(),
+  "progress": zod.int(),
   "url": zod.string().nullable(),
   "error": zod.string().nullable(),
   "createdAt": zod.coerce.date()
@@ -135,7 +135,7 @@ export const LogoutBrowserSessionResponse = zod.void()
 
 export const RequestUploadUrlBody = zod.object({
   "name": zod.string().min(1),
-  "size": zod.number().int().min(1),
+  "size": zod.int().min(1),
   "contentType": zod.string().min(1)
 })
 
@@ -145,11 +145,11 @@ export const RequestUploadUrlBody = zod.object({
 
 
 export const RequestUploadUrlResponse = zod.object({
-  "uploadURL": zod.string().url(),
+  "uploadURL": zod.url(),
   "objectPath": zod.string(),
   "metadata": zod.object({
   "name": zod.string().min(1),
-  "size": zod.number().int().min(1),
+  "size": zod.int().min(1),
   "contentType": zod.string().min(1)
 })
 })
@@ -160,27 +160,27 @@ export const RequestUploadUrlResponse = zod.object({
  */
 export const GetStudioBootstrapResponse = zod.object({
   "project": zod.object({
-  "id": zod.number().int(),
+  "id": zod.int(),
   "title": zod.string(),
   "logline": zod.string(),
   "audience": zod.string(),
   "seasonLabel": zod.string(),
-  "activeEpisodeId": zod.number().int()
+  "activeEpisodeId": zod.int()
 }),
   "episodes": zod.array(zod.object({
-  "id": zod.number().int(),
-  "projectId": zod.number().int(),
-  "number": zod.number().int(),
+  "id": zod.int(),
+  "projectId": zod.int(),
+  "number": zod.int(),
   "title": zod.string(),
   "summary": zod.string(),
   "status": zod.enum(['scripting', 'storyboarding', 'generating', 'done']),
-  "progress": zod.number().int(),
+  "progress": zod.int(),
   "duration": zod.string()
 })),
   "scenes": zod.array(zod.object({
-  "id": zod.number().int(),
-  "episodeId": zod.number().int(),
-  "number": zod.number().int(),
+  "id": zod.int(),
+  "episodeId": zod.int(),
+  "number": zod.int(),
   "heading": zod.string(),
   "synopsis": zod.string(),
   "content": zod.string(),
@@ -188,8 +188,8 @@ export const GetStudioBootstrapResponse = zod.object({
   "duration": zod.string()
 })),
   "characters": zod.array(zod.object({
-  "id": zod.number().int(),
-  "projectId": zod.number().int(),
+  "id": zod.int(),
+  "projectId": zod.int(),
   "name": zod.string(),
   "role": zod.string(),
   "personality": zod.string(),
@@ -199,9 +199,9 @@ export const GetStudioBootstrapResponse = zod.object({
   "referenceImageUrl": zod.string().nullable()
 })),
   "shots": zod.array(zod.object({
-  "id": zod.number().int(),
-  "sceneId": zod.number().int(),
-  "number": zod.number().int(),
+  "id": zod.int(),
+  "sceneId": zod.int(),
+  "number": zod.int(),
   "description": zod.string(),
   "shotType": zod.string(),
   "movement": zod.string(),
@@ -212,8 +212,8 @@ export const GetStudioBootstrapResponse = zod.object({
   "status": zod.enum(['planned', 'queued', 'generating', 'ready'])
 })),
   "clips": zod.array(zod.object({
-  "id": zod.number().int(),
-  "shotId": zod.number().int(),
+  "id": zod.int(),
+  "shotId": zod.int(),
   "provider": zod.string(),
   "status": zod.enum(['queued', 'generating', 'ready', 'failed']),
   "url": zod.string().nullable(),
@@ -222,11 +222,11 @@ export const GetStudioBootstrapResponse = zod.object({
   "createdAt": zod.coerce.date()
 })),
   "assets": zod.array(zod.object({
-  "id": zod.number().int(),
-  "projectId": zod.number().int(),
-  "episodeId": zod.number().int().nullable(),
-  "sceneId": zod.number().int().nullable(),
-  "characterId": zod.number().int().nullable(),
+  "id": zod.int(),
+  "projectId": zod.int(),
+  "episodeId": zod.int().nullable(),
+  "sceneId": zod.int().nullable(),
+  "characterId": zod.int().nullable(),
   "kind": zod.enum(['storyboard', 'character-reference']),
   "objectPath": zod.string(),
   "name": zod.string(),
@@ -245,9 +245,9 @@ export const GetStudioBootstrapResponse = zod.object({
 
 
 export const CreateStudioAssetBody = zod.object({
-  "episodeId": zod.number().int().nullish(),
-  "sceneId": zod.number().int().nullish(),
-  "characterId": zod.number().int().nullish(),
+  "episodeId": zod.int().nullish(),
+  "sceneId": zod.int().nullish(),
+  "characterId": zod.int().nullish(),
   "kind": zod.enum(['storyboard', 'character-reference']),
   "objectPath": zod.string().min(1),
   "name": zod.string().min(1),
@@ -255,11 +255,11 @@ export const CreateStudioAssetBody = zod.object({
 })
 
 export const CreateStudioAssetResponse = zod.object({
-  "id": zod.number().int(),
-  "projectId": zod.number().int(),
-  "episodeId": zod.number().int().nullable(),
-  "sceneId": zod.number().int().nullable(),
-  "characterId": zod.number().int().nullable(),
+  "id": zod.int(),
+  "projectId": zod.int(),
+  "episodeId": zod.int().nullable(),
+  "sceneId": zod.int().nullable(),
+  "characterId": zod.int().nullable(),
   "kind": zod.enum(['storyboard', 'character-reference']),
   "objectPath": zod.string(),
   "name": zod.string(),
@@ -276,16 +276,16 @@ export const UpdateStudioProjectBody = zod.object({
   "logline": zod.string().optional(),
   "audience": zod.string().optional(),
   "seasonLabel": zod.string().optional(),
-  "activeEpisodeId": zod.number().int().optional()
+  "activeEpisodeId": zod.int().optional()
 })
 
 export const UpdateStudioProjectResponse = zod.object({
-  "id": zod.number().int(),
+  "id": zod.int(),
   "title": zod.string(),
   "logline": zod.string(),
   "audience": zod.string(),
   "seasonLabel": zod.string(),
-  "activeEpisodeId": zod.number().int()
+  "activeEpisodeId": zod.int()
 })
 
 
@@ -303,8 +303,8 @@ export const CreateStudioCharacterBody = zod.object({
 })
 
 export const CreateStudioCharacterResponse = zod.object({
-  "id": zod.number().int(),
-  "projectId": zod.number().int(),
+  "id": zod.int(),
+  "projectId": zod.int(),
   "name": zod.string(),
   "role": zod.string(),
   "personality": zod.string(),
@@ -333,8 +333,8 @@ export const UpdateStudioCharacterBody = zod.object({
 })
 
 export const UpdateStudioCharacterResponse = zod.object({
-  "id": zod.number().int(),
-  "projectId": zod.number().int(),
+  "id": zod.int(),
+  "projectId": zod.int(),
   "name": zod.string(),
   "role": zod.string(),
   "personality": zod.string(),
@@ -352,7 +352,7 @@ export const UpdateStudioCharacterResponse = zod.object({
 
 
 export const CreateStudioSceneBody = zod.object({
-  "episodeId": zod.number().int(),
+  "episodeId": zod.int(),
   "heading": zod.string().min(1),
   "synopsis": zod.string(),
   "content": zod.string(),
@@ -360,9 +360,9 @@ export const CreateStudioSceneBody = zod.object({
 })
 
 export const CreateStudioSceneResponse = zod.object({
-  "id": zod.number().int(),
-  "episodeId": zod.number().int(),
-  "number": zod.number().int(),
+  "id": zod.int(),
+  "episodeId": zod.int(),
+  "number": zod.int(),
   "heading": zod.string(),
   "synopsis": zod.string(),
   "content": zod.string(),
@@ -389,9 +389,9 @@ export const UpdateStudioSceneBody = zod.object({
 })
 
 export const UpdateStudioSceneResponse = zod.object({
-  "id": zod.number().int(),
-  "episodeId": zod.number().int(),
-  "number": zod.number().int(),
+  "id": zod.int(),
+  "episodeId": zod.int(),
+  "number": zod.int(),
   "heading": zod.string(),
   "synopsis": zod.string(),
   "content": zod.string(),
@@ -407,7 +407,7 @@ export const UpdateStudioSceneResponse = zod.object({
 
 
 export const CreateStudioShotBody = zod.object({
-  "sceneId": zod.number().int(),
+  "sceneId": zod.int(),
   "description": zod.string().min(1),
   "shotType": zod.string(),
   "movement": zod.string(),
@@ -417,9 +417,9 @@ export const CreateStudioShotBody = zod.object({
 })
 
 export const CreateStudioShotResponse = zod.object({
-  "id": zod.number().int(),
-  "sceneId": zod.number().int(),
-  "number": zod.number().int(),
+  "id": zod.int(),
+  "sceneId": zod.int(),
+  "number": zod.int(),
   "description": zod.string(),
   "shotType": zod.string(),
   "movement": zod.string(),
@@ -451,9 +451,9 @@ export const UpdateStudioShotBody = zod.object({
 })
 
 export const UpdateStudioShotResponse = zod.object({
-  "id": zod.number().int(),
-  "sceneId": zod.number().int(),
-  "number": zod.number().int(),
+  "id": zod.int(),
+  "sceneId": zod.int(),
+  "number": zod.int(),
   "description": zod.string(),
   "shotType": zod.string(),
   "movement": zod.string(),
@@ -472,14 +472,14 @@ export const UpdateStudioShotResponse = zod.object({
 
 
 export const ReorderStudioShotsBody = zod.object({
-  "sceneId": zod.number().int(),
-  "shotIds": zod.array(zod.number().int()).min(1)
+  "sceneId": zod.int(),
+  "shotIds": zod.array(zod.int()).min(1)
 })
 
 export const ReorderStudioShotsResponseItem = zod.object({
-  "id": zod.number().int(),
-  "sceneId": zod.number().int(),
-  "number": zod.number().int(),
+  "id": zod.int(),
+  "sceneId": zod.int(),
+  "number": zod.int(),
   "description": zod.string(),
   "shotType": zod.string(),
   "movement": zod.string(),
@@ -504,11 +504,11 @@ export const CompleteStudioEpisodeBody = zod.object({
 })
 
 export const CompleteStudioEpisodeResponse = zod.object({
-  "episodeId": zod.number().int(),
+  "episodeId": zod.int(),
   "scenes": zod.array(zod.object({
-  "id": zod.number().int(),
-  "episodeId": zod.number().int(),
-  "number": zod.number().int(),
+  "id": zod.int(),
+  "episodeId": zod.int(),
+  "number": zod.int(),
   "heading": zod.string(),
   "synopsis": zod.string(),
   "content": zod.string(),
@@ -516,9 +516,9 @@ export const CompleteStudioEpisodeResponse = zod.object({
   "duration": zod.string()
 })),
   "shots": zod.array(zod.object({
-  "id": zod.number().int(),
-  "sceneId": zod.number().int(),
-  "number": zod.number().int(),
+  "id": zod.int(),
+  "sceneId": zod.int(),
+  "number": zod.int(),
   "description": zod.string(),
   "shotType": zod.string(),
   "movement": zod.string(),
@@ -554,7 +554,7 @@ export const CheckSceneContentBody = zod.object({
 })
 
 export const CheckSceneContentResponse = zod.object({
-  "score": zod.number().int(),
+  "score": zod.int(),
   "label": zod.string(),
   "flags": zod.array(zod.string()),
   "suggestions": zod.array(zod.string())
@@ -619,15 +619,15 @@ export const GenerateFaithQuestionStoryResponse = zod.object({
  * @summary Submit a shot to the configured video provider
  */
 export const GenerateShotClipBody = zod.object({
-  "shotId": zod.number().int(),
+  "shotId": zod.int(),
   "prompt": zod.string(),
   "referenceImageUrl": zod.string().nullish(),
   "provider": zod.string().nullish()
 })
 
 export const GenerateShotClipResponse = zod.object({
-  "id": zod.number().int(),
-  "shotId": zod.number().int(),
+  "id": zod.int(),
+  "shotId": zod.int(),
   "provider": zod.string(),
   "status": zod.enum(['queued', 'generating', 'ready', 'failed']),
   "url": zod.string().nullable(),
