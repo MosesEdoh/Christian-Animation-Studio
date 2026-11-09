@@ -3,3 +3,4 @@
 - [Movie export expectations](movie-export-expectations.md) — user chose storyboard movies now, in both orientations and both resolutions; distinguish them from finished animation.
 - [Intended audience](intended-audience.md) — the user wants creators, parents, video editors, and story animators worldwide to be able to use the product.
 - [Movie output limits](movie-resource-limits.md) — FFmpeg can exit successfully with a size-limited, incomplete movie; do not publish truncated exports.
+- [Bundled API verification](bundled-api-verification.md) — import-boundary changes need a bundled-server startup check; passing tsx tests can miss initialization-order failures.

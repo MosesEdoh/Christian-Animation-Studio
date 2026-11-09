@@ -6,6 +6,10 @@ import { join } from "node:path";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import { isIP } from "node:net";
+import { episodeExportAdmission, type EpisodeExportLease } from "./episodeExportAdmission";
+export {
+  EpisodeVideoBusyError, MAX_CONCURRENT_EPISODE_EXPORTS, EPISODE_EXPORT_RETRY_SECONDS,
+} from "./episodeExportAdmission";
 
 const MAX_SOURCE_BYTES = 250 * 1024 * 1024;
 const MAX_CLIP_BYTES = 100 * 1024 * 1024;
@@ -13,19 +17,8 @@ const MAX_REDIRECTS = 3;
 const CLIP_TIMEOUT_MS = 30_000;
 const FFMPEG_TIMEOUT_MS = 3 * 60_000;
 
-// Per API process, independent of the queued storyboard movie worker.
-// Keep admission synchronous and before any temp files or provider requests.
-export const MAX_CONCURRENT_EPISODE_EXPORTS = 2;
-export const EPISODE_EXPORT_RETRY_SECONDS = 15;
-let activeExports = 0;
-const retainedExports = new Set<string>();
-
-export class EpisodeVideoBusyError extends Error {
-  constructor() {
-    super(`Episode exports are busy. Try again in ${EPISODE_EXPORT_RETRY_SECONDS} seconds.`);
-    this.name = "EpisodeVideoBusyError";
-  }
-}
+// Shared provider-clip admission is independent of the storyboard movie queue.
+const retainedExports = new Map<string, EpisodeExportLease>();
 
 export class EpisodeVideoUnavailableError extends Error {
   constructor(public readonly report: EpisodeVideoReport) {
@@ -62,6 +55,7 @@ export type AssembledEpisodeVideo = {
   directory: string;
   outputPath: string;
   report: EpisodeVideoReport;
+  signal: AbortSignal;
 };
 
 function isPublicHostname(hostname: string): boolean {
@@ -214,16 +208,20 @@ export async function assembleEpisodeVideo(
   signal?: AbortSignal,
 ): Promise<AssembledEpisodeVideo> {
   signal?.throwIfAborted();
-  if (activeExports >= MAX_CONCURRENT_EPISODE_EXPORTS) throw new EpisodeVideoBusyError();
-  activeExports++;
+  // Acquire globally before creating files or contacting providers. No local fallback.
+  const lease = await episodeExportAdmission.acquire();
+  signal = AbortSignal.any([lease.signal, ...(signal ? [signal] : [])]);
   let directory: string | undefined;
   const report: EpisodeVideoReport = { usedClipIds: [], skippedClips: [] };
   const normalizedFiles: string[] = [];
   let sourceBytes = 0;
   try {
+    lease.assertOwned();
+    signal.throwIfAborted();
     directory = await mkdtemp(join(tmpdir(), "frame-faith-episode-"));
     signal?.throwIfAborted();
     for (const clip of clips) {
+      lease.assertOwned();
       signal?.throwIfAborted();
       if (clip.status !== "ready") {
         report.skippedClips.push({
@@ -293,23 +291,27 @@ export async function assembleEpisodeVideo(
     ], signal);
     signal?.throwIfAborted();
     // Retain capacity while the caller streams the MP4 and until cleanup completes.
-    retainedExports.add(directory);
-    return { directory, outputPath, report };
+    lease.assertOwned();
+    retainedExports.set(directory, lease);
+    return { directory, outputPath, report, signal };
   } catch (error) {
     try {
       if (directory) await rm(directory, { recursive: true, force: true });
     } finally {
-      activeExports--;
+      await lease.release();
     }
     throw error;
   }
 }
 
 export async function removeEpisodeVideo(directory: string): Promise<void> {
+  const lease = retainedExports.get(directory);
+  // Claim cleanup before its first await so duplicate cleanup cannot release early.
+  retainedExports.delete(directory);
   try {
     await rm(directory, { recursive: true, force: true });
   } finally {
     // Deleting twice (or concurrently) must never release another export's slot.
-    if (retainedExports.delete(directory)) activeExports--;
+    await lease?.release();
   }
 }

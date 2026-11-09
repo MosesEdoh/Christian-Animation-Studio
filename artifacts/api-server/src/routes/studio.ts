@@ -901,7 +901,7 @@ router.get("/studio/episodes/:id/video", async (req, res): Promise<void> => {
     res.setHeader("Cache-Control", "private, no-store");
     res.setHeader("X-Content-Type-Options", "nosniff");
     res.setHeader("X-Episode-Video-Report", Buffer.from(JSON.stringify(assembled.report)).toString("base64"));
-    await pipeline(createReadStream(assembled.outputPath), res, { signal: controller.signal });
+    await pipeline(createReadStream(assembled.outputPath), res, { signal: assembled.signal });
   } catch (error) {
     if (controller.signal.aborted || res.destroyed) return;
     const message = error instanceof Error ? error.message : "Episode video assembly failed.";

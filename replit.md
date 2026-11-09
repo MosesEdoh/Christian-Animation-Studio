@@ -7,6 +7,7 @@ Private creative workspace for writing, directing, storyboarding, and generating
 - `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm test:episode-exports` — episode assembly, ZIP, download helper, and signed-in dashboard component regression tests; requires `ffmpeg` and `ffprobe`, creates temporary media, and mocks provider downloads without querying the database
+- `pnpm test:episode-admission` — shared admission unit and PostgreSQL multi-process/crash-recovery tests; requires `DATABASE_URL` and the current DB schema; uses isolated test pool names
 - `pnpm --filter @workspace/creative-studio run test:components` — dashboard and episode download controls in jsdom; no sign-in, database, or running servers required
 - `pnpm run build` — typecheck + build all packages
 - `pnpm --filter @workspace/api-spec run codegen` — regenerate API hooks and Zod schemas from the OpenAPI spec
@@ -59,7 +60,8 @@ The studio provides a dashboard, screenplay editor, AI co-writer, audience safet
 - Run `pnpm --filter @workspace/api-spec run codegen` after changing `lib/api-spec/openapi.yaml`.
 - Gemini direct API keys for new users may reject older model names; the client defaults to `GEMINI_MODEL` or `gemini-3.6-flash`.
 - A mock video provider creates queue records, not rendered video; real media downloads depend on the selected provider returning accessible clip URLs.
-- Provider-clip episode MP4 exports allow two active exports per API process (including streaming and cleanup), with no queue. Excess requests return 503 / `EPISODE_EXPORT_BUSY` and `Retry-After: 15`. This limit is separate from storyboard movies; multiple API processes each have their own limit.
+- Provider-clip episode MP4 exports share a global capacity of two via PostgreSQL leases (including streaming and cleanup), with no queue. Excess requests return 503 / `EPISODE_EXPORT_BUSY` and `Retry-After: 15`. Owners renew every 15 seconds; leases expire after 60 seconds, and failed renewal stops the export. Database failures never fall back to local admission. This is separate from the storyboard movie queue.
+- Roll out shared admission only after applying the DB schema, and drain/restart all old API instances: older versions do not participate in shared admission. Changing the capacity requires draining exports and updating both the code constant and the `provider-clip-episode` pool capacity together; mismatched instances fail closed.
 
 ## Pointers
 

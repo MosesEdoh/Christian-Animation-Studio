@@ -1,11 +1,13 @@
+import "./fixtures/databaseEnvironment";
 import assert from "node:assert/strict";
-import { after, afterEach, before, mock, test } from "node:test";
+import { after, afterEach, before, beforeEach, mock, test } from "node:test";
 import { execFileSync } from "node:child_process";
 import { chmod, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { EventEmitter } from "node:events";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Writable } from "node:stream";
+import { episodeExportAdmission, acquireEpisodeExportLease, type EpisodeAdmissionStore } from "../src/lib/episodeExportAdmission";
 import {
   assembleEpisodeVideo, EpisodeVideoUnavailableError, removeEpisodeVideo,
   EpisodeVideoBusyError, MAX_CONCURRENT_EPISODE_EXPORTS, EPISODE_EXPORT_RETRY_SECONDS,
@@ -21,6 +23,21 @@ const videoResponse = (bytes: Buffer | string = media[0], headers: Record<string
   new Response(bytes, { headers: { "content-type": "video/mp4", ...headers } });
 const mediaTool = (command: string, args: string[]) =>
   execFileSync(command, args, { timeout: 30_000, maxBuffer: 16 * 1024 * 1024 });
+
+// Media/HTTP tests deliberately isolate storage. Real shared PostgreSQL admission
+// is exercised by episodeExportAdmission.test.ts, including independent processes.
+const owners = new Set<string>();
+const store: EpisodeAdmissionStore = {
+  async acquire(owner) {
+    if (owners.size >= MAX_CONCURRENT_EPISODE_EXPORTS) return false;
+    owners.add(owner);
+    return true;
+  },
+  async renew(owner) { return owners.has(owner); },
+  async release(owner) { owners.delete(owner); },
+};
+const acquireMock = () => mock.method(episodeExportAdmission, "acquire", () => acquireEpisodeExportLease(store));
+beforeEach(() => { assert.equal(owners.size, 0); acquireMock(); });
 
 before(async () => {
   // Intentionally require real media tools: missing FFmpeg must fail, not skip coverage.
@@ -432,6 +449,74 @@ test("cancelling a pending provider request aborts fetch and does not try later 
   });
   await assert.rejects(assembleEpisodeVideo([clip(1), clip(2)], undefined, controller.signal), { name: "AbortError" });
   assert.equal(fetchMock.mock.callCount(), 1);
+  assert.deepEqual(await episodeDirectories(), before);
+});
+
+test("losing shared ownership aborts an active provider request and frees its temporary files", async () => {
+  const before = await episodeDirectories();
+  const controller = new AbortController();
+  let released = 0;
+  mock.method(episodeExportAdmission, "acquire", async () => ({
+    signal: controller.signal,
+    assertOwned: () => controller.signal.throwIfAborted(),
+    async release() { released++; },
+  }));
+  const fetchMock = mock.method(globalThis, "fetch", async (_input, init) => {
+    return new Promise<Response>((_resolve, reject) => {
+      init!.signal!.addEventListener("abort", () => reject(init!.signal!.reason), { once: true });
+      controller.abort(new Error("Ownership lost"));
+    });
+  });
+  await assert.rejects(assembleEpisodeVideo([clip(1), clip(2)]), /Ownership lost/);
+  assert.equal(fetchMock.mock.callCount(), 1);
+  assert.equal(released, 1);
+  assert.deepEqual(await episodeDirectories(), before);
+});
+
+test("HTTP delivery stops and cleans up when its retained lease loses ownership", async () => {
+  process.env.DATABASE_URL ??= "postgresql://test:test@localhost/unused";
+  const { db, studioEpisodesTable } = await import("@workspace/db");
+  const { default: router } = await import("../src/routes/studio");
+  const handler = router.stack.find(layer => layer.route?.path === "/studio/episodes/:id/video")!.route.stack[0].handle;
+  mock.method(db, "select", (() => ({
+    from(table: unknown) {
+      if (table === studioEpisodesTable) return { where: async () => [{ id: 1, number: 8 }] };
+      const chain = {
+        innerJoin: () => chain, where: () => chain,
+        orderBy: async () => [{ clip: clip(1) }],
+      };
+      return chain;
+    },
+  })) as typeof db.select);
+  const controller = new AbortController();
+  let released = false;
+  let writes = 0;
+  mock.method(episodeExportAdmission, "acquire", async () => ({
+    signal: controller.signal,
+    assertOwned: () => controller.signal.throwIfAborted(),
+    async release() { released = true; },
+  }));
+  mock.method(globalThis, "fetch", async () => videoResponse());
+  const before = await episodeDirectories();
+  const req = Object.assign(new EventEmitter(), {
+    params: { id: "1" }, log: { error() { assert.fail("Aborted delivery is not an assembly error"); } },
+  });
+  const res = Object.assign(new Writable({
+    write(_chunk, _encoding, done) {
+      writes++;
+      assert.equal(released, false);
+      controller.abort(new Error("Ownership lost during delivery"));
+      done();
+    },
+  }), {
+    setHeader() {},
+    status() { assert.fail("Cannot send a new status during delivery"); },
+    json() { assert.fail("Cannot send JSON during delivery"); },
+  });
+  await handler(req, res, () => {});
+  assert.ok(writes > 0);
+  assert.equal(res.destroyed, true);
+  assert.equal(released, true);
   assert.deepEqual(await episodeDirectories(), before);
 });
 
