@@ -1,1 +1,2 @@
 - [Gemini model availability](gemini-model-availability.md) — keep the model configurable and pace free-tier generation to avoid per-minute 429s.
+- [Faith storytelling](faith-storytelling.md) — Bible-grounded Christianity, with safe space for children's difficult faith questions.
