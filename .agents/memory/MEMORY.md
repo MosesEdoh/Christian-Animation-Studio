@@ -3,6 +3,7 @@
 - [Movie export expectations](movie-export-expectations.md) — user chose storyboard movies now, in both orientations and both resolutions; distinguish them from finished animation.
 - [Intended audience](intended-audience.md) — the user wants creators, parents, video editors, and story animators worldwide to be able to use the product.
 - [Movie output limits](movie-resource-limits.md) — FFmpeg can exit successfully with a size-limited, incomplete movie; do not publish truncated exports.
+- [Google video generation](google-video-generation.md) — use Gemini Omni’s supported API, not the Flow website; account for EEA restrictions on minor images.
 - [Bundled API verification](bundled-api-verification.md) — import-boundary changes need a bundled-server startup check; passing tsx tests can miss initialization-order failures.
 - [PostgreSQL idle-client errors](postgres-idle-client-errors.md) — every node-postgres pool needs an error listener so dropped idle sockets do not terminate the process.
 - [Temporary render recovery safety](temporary-render-recovery.md) — favor retaining ambiguous folders over deleting potentially active work.
