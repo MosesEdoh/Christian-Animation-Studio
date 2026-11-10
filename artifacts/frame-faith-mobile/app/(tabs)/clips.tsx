@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react';
 import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native';
-import { getGetStudioBootstrapQueryKey, useGetStudioBootstrap, useListStudioExports, getListStudioExportsQueryKey, useCreateStudioExport, useGenerateShotClip } from '@workspace/api-client-react';
+import { getGetStudioBootstrapQueryKey, useGetStudioBootstrap, getListStudioExportsQueryKey, useCreateStudioExport, useGenerateShotClip } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useColors } from '@/hooks/useColors';
 import { PrivateVideo } from '@/components/PrivateVideo';
 import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
+import { useMovieExportHistory } from '@/hooks/useMovieExportHistory';
 
 export default function ClipsScreen() {
   const colors = useColors();
@@ -20,11 +21,11 @@ export default function ClipsScreen() {
   const [useReference, setUseReference] = useState(false);
   const [error, setError] = useState('');
   const query = useGetStudioBootstrap({ query: { queryKey: getGetStudioBootstrapQueryKey() } });
-  const exports = useListStudioExports(undefined, { query: { queryKey: getListStudioExportsQueryKey(), refetchInterval: 3000 } });
+  const exports = useMovieExportHistory();
   const create = useCreateStudioExport();
   const generateClip = useGenerateShotClip();
   const button = { backgroundColor: colors.secondary, borderRadius: 12, padding: 13, marginBottom: 8 };
-  const readyMovies = (exports.data ?? []).filter(job => job.status === 'ready' && job.url);
+  const readyMovies = exports.jobs.filter(job => job.status === 'ready' && job.url);
   const movie = readyMovies.find(job => job.id === selected) ?? readyMovies[0];
   const activeShot = query.data?.shots.find(shot => shot.id === selectedShot) ?? query.data?.shots[0];
   const readyClips = (query.data?.clips ?? []).filter(clip => clip.status === 'ready' && clip.url);
@@ -139,10 +140,24 @@ export default function ClipsScreen() {
     <Pressable style={button} onPress={() => setEpisodeId(null)}><Text style={{ color: colors.foreground }}>{episodeId === null ? '✓ ' : ''}Entire series · one MP4</Text></Pressable>
     {query.data.episodes.map(episode => <Pressable key={episode.id} style={button} onPress={() => setEpisodeId(episode.id)}><Text style={{ color: colors.foreground }}>{episodeId === episode.id ? '✓ ' : ''}Episode {episode.number}: {episode.title}</Text></Pressable>)}
     <Pressable disabled={create.isPending} style={{ ...button, backgroundColor: colors.primary }} onPress={queue}><Text style={{ color: colors.primaryForeground, fontWeight: '700' }}>{create.isPending ? 'Queuing…' : 'Build MP4 · both orientations & resolutions'}</Text></Pressable>
-    {exports.isError && <Pressable onPress={() => exports.refetch()}><Text style={{ color: colors.destructive }}>Could not load exports. Retry.</Text></Pressable>}
+    <Text style={{ color: colors.foreground, fontSize: 22, fontFamily: 'Fraunces_600SemiBold' }}>Saved movies</Text>
+    <Pressable testID="mobile-refresh-movies" accessibilityRole="button" accessibilityState={{ disabled: exports.isFetching }} disabled={exports.isFetching} style={button} onPress={() => { if (!exports.isFetching) void exports.refetch(); }}><Text style={{ color: colors.foreground }}>{exports.isRefetching ? 'Refreshing movies…' : 'Refresh movies'}</Text></Pressable>
+    {exports.isLoading && <ActivityIndicator testID="mobile-movies-loading" color={colors.primary} />}
+    {exports.isError && !exports.isFetchNextPageError && <Text accessibilityRole="alert" style={{ color: colors.destructive }}>Could not refresh saved movies. Use Refresh movies to retry. Previously loaded movies are still available.</Text>}
+    {!exports.isLoading && !exports.isError && exports.jobs.length === 0 && <Text style={{ color: colors.mutedForeground }}>No saved movies yet. Build a storyboard movie to see it here.</Text>}
     {selectedClip === null && movie?.url && <PrivateVideo key={movie.url} url={movie.url} label={`Storyboard #${movie.id} · ${movie.aspectRatio} · ${movie.quality}`} />}
     {selectedClip !== null && activeClip?.url && <PrivateVideo key={`clip-${selectedClip}`} url={activeClip.url} label={activeClip.provider} />}
-    {(exports.data ?? []).slice(0, 16).map(job => <Pressable key={job.id} style={button} disabled={job.status !== 'ready'} onPress={() => { setSelected(job.id); setSelectedClip(null); }}><Text style={{ color: colors.foreground }}>#{job.id} · {job.episodeId ? `Episode ${query.data?.episodes.find(episode => episode.id === job.episodeId)?.number}` : 'Series'} · {job.aspectRatio} · {job.quality} · {job.status} {job.status === 'rendering' ? `${job.progress}%` : ''}</Text>{job.error && <Text style={{ color: colors.destructive }}>{job.error}</Text>}</Pressable>)}
+    {exports.jobs.map(job => <Pressable key={job.id} testID={`mobile-select-movie-${job.id}`} accessibilityRole="button" accessibilityState={{ selected: selectedClip === null && movie?.id === job.id, disabled: job.status !== 'ready' || !job.url }} style={button} disabled={job.status !== 'ready' || !job.url} onPress={() => { setSelected(job.id); setSelectedClip(null); }}><Text style={{ color: colors.foreground }}>#{job.id} · {job.episodeId ? `Episode ${query.data?.episodes.find(episode => episode.id === job.episodeId)?.number}` : 'Series'} · {job.aspectRatio} · {job.quality} · {job.status} {job.status === 'rendering' ? `${job.progress}%` : ''}</Text>{job.error && <Text style={{ color: colors.destructive }}>{job.error}</Text>}</Pressable>)}
+    {exports.isFetchNextPageError && <Text accessibilityRole="alert" style={{ color: colors.destructive }}>Could not load older movies. Your loaded movies are still available.</Text>}
+    {exports.hasNextPage && <Pressable
+      testID="mobile-load-older-movies"
+      accessibilityRole="button"
+      accessibilityState={{ disabled: exports.isFetching }}
+      disabled={exports.isFetching}
+      style={button}
+      onPress={() => { if (!exports.isFetching) void exports.fetchNextPage({ cancelRefetch: false }); }}
+    ><Text style={{ color: colors.foreground }}>{exports.isFetchingNextPage ? 'Loading older movies…' : exports.isFetchNextPageError ? 'Retry older movies' : 'Load older movies'}</Text></Pressable>}
+    {exports.jobs.length > 0 && !exports.hasNextPage && !exports.isLoading && <Text testID="mobile-movies-end" style={{ color: colors.mutedForeground }}>All saved movies loaded.</Text>}
     <Text style={{ color: colors.foreground, fontSize: 22, fontFamily: 'Fraunces_600SemiBold' }}>Rendered clips</Text>
     {readyClips.length ? readyClips.map(clip => <Pressable key={clip.id} style={button} testID={`mobile-select-clip-${clip.id}`} onPress={() => setSelectedClip(clip.id)}><Text style={{ color: colors.foreground }}>Preview {clip.provider} · {clip.duration}</Text></Pressable>) : <Text style={{ color: colors.mutedForeground }}>No finished videos yet. Only real clips with playable video files appear here.</Text>}
   </KeyboardAwareScrollViewCompat>;
