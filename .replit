@@ -47,3 +47,4 @@ packages = ["ffmpeg"]
 
 [userenv.shared]
 STUDIO_ALLOWED_EMAILS = "Jesusbabyeodutolu@gmail.com"
+BETTERSTACK_INGESTING_HOST = "https://s2829613.us-west-2a.betterstackdata.com"

@@ -41,6 +41,8 @@ test("admission fails closed on saturation or database failure", async () => {
   await assert.rejects(acquireEpisodeExportLease(store, timing, telemetry), EpisodeVideoBusyError);
   assert.equal(events[0]?.fields.event, "episode_export.capacity_rejected");
   assert.equal(events[0]?.fields.retryAfterSeconds, 15);
+  assert.equal(events[0]?.fields.signalThresholdCount, 10);
+  assert.equal(events[0]?.fields.signalWindowSeconds, 300);
   store.acquire = async () => { throw new Error("Database unavailable"); };
   await assert.rejects(acquireEpisodeExportLease(store, timing, telemetry), EpisodeExportAdmissionError);
   assert.equal(events[1]?.fields.event, "episode_export.coordination_failure");

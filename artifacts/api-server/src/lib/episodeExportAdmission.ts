@@ -3,6 +3,7 @@ import { sql } from "drizzle-orm";
 import { createBoundedDatabase } from "@workspace/db";
 import { logger } from "./logger";
 import { EPISODE_EXPORT_LEASE_MS } from "./episodeExportTiming";
+import { createEpisodeExportAlertSink } from "./episodeExportAlertSink";
 
 export const MAX_CONCURRENT_EPISODE_EXPORTS = 2;
 export const EPISODE_EXPORT_RETRY_SECONDS = 15;
@@ -10,6 +11,7 @@ export const EPISODE_EXPORT_POOL_NAME = "provider-clip-episode";
 export const EPISODE_EXPORT_COORDINATION_ALERT_THRESHOLD_COUNT = 3;
 export const EPISODE_EXPORT_COORDINATION_ALERT_WINDOW_SECONDS = 300;
 export const EPISODE_EXPORT_CAPACITY_SIGNAL_THRESHOLD_COUNT = 10;
+export const EPISODE_EXPORT_CAPACITY_SIGNAL_WINDOW_SECONDS = 300;
 const LEASE_MS = EPISODE_EXPORT_LEASE_MS;
 const RENEW_MS = 15_000;
 // Stop work well before another instance can reuse an expired lease.
@@ -20,6 +22,32 @@ const coordinationAlert = {
   windowSeconds: EPISODE_EXPORT_COORDINATION_ALERT_WINDOW_SECONDS,
   groupBy: ["event", "failure", "pool"],
 } as const;
+
+let lastAlertDeliveryWarningAt = 0;
+const forwardEpisodeExportSignal = createEpisodeExportAlertSink({
+  sourceToken: process.env.BETTERSTACK_SOURCE_TOKEN,
+  ingestingUrl: process.env.BETTERSTACK_INGESTING_HOST ?? process.env.BETTERSTACK_INGESTING_URL,
+  enabled: process.env.NODE_ENV === "production",
+  onDeliveryFailure(reason) {
+    const now = Date.now();
+    if (now - lastAlertDeliveryWarningAt < 60_000) return;
+    lastAlertDeliveryWarningAt = now;
+    logger.warn({
+      event: "episode_export.alert_delivery_failure",
+      reason,
+    }, "Episode export alert signal could not be forwarded to Better Stack");
+  },
+});
+
+function logAdmissionSignal(
+  telemetry: EpisodeExportTelemetry,
+  level: "info" | "warn" | "error",
+  fields: Record<string, unknown>,
+  message: string,
+): void {
+  telemetry[level](fields, message);
+  if (telemetry === logger) void forwardEpisodeExportSignal(fields, message);
+}
 
 export class EpisodeVideoBusyError extends Error {
   constructor() {
@@ -126,7 +154,7 @@ export async function acquireEpisodeExportLease(
   try {
     acquired = await store.acquire(owner);
   } catch {
-    telemetry.error({
+    logAdmissionSignal(telemetry, "error", {
       event: "episode_export.coordination_failure",
       failure: "admission_database_error",
       pool: EPISODE_EXPORT_POOL_NAME,
@@ -135,13 +163,13 @@ export async function acquireEpisodeExportLease(
     throw new EpisodeExportAdmissionError();
   }
   if (!acquired) {
-    telemetry.info({
+    logAdmissionSignal(telemetry, "info", {
       event: "episode_export.capacity_rejected",
       pool: EPISODE_EXPORT_POOL_NAME,
       capacity: store instanceof PostgresEpisodeAdmissionStore ? store.capacity : MAX_CONCURRENT_EPISODE_EXPORTS,
       retryAfterSeconds: EPISODE_EXPORT_RETRY_SECONDS,
       signalThresholdCount: EPISODE_EXPORT_CAPACITY_SIGNAL_THRESHOLD_COUNT,
-      signalWindowSeconds: EPISODE_EXPORT_COORDINATION_ALERT_WINDOW_SECONDS,
+      signalWindowSeconds: EPISODE_EXPORT_CAPACITY_SIGNAL_WINDOW_SECONDS,
     }, "Episode export rejected at shared capacity");
     throw new EpisodeVideoBusyError();
   }
@@ -161,9 +189,9 @@ export async function acquireEpisodeExportLease(
       ...coordinationAlert,
     };
     if (failure === "heartbeat_database_error") {
-      telemetry.error(fields, "Episode export heartbeat database operation failed");
+      logAdmissionSignal(telemetry, "error", fields, "Episode export heartbeat database operation failed");
     } else {
-      telemetry.warn(fields, "Episode export heartbeat stopped owning its shared lease");
+      logAdmissionSignal(telemetry, "warn", fields, "Episode export heartbeat stopped owning its shared lease");
     }
   };
   const assertOwned = () => {
@@ -209,7 +237,7 @@ export async function acquireEpisodeExportLease(
       await store.release(owner);
     } catch {
       // Fail closed: the slot stays occupied until its database expiry.
-      telemetry.error({
+      logAdmissionSignal(telemetry, "error", {
         event: "episode_export.coordination_failure",
         failure: "release_database_error",
         pool: EPISODE_EXPORT_POOL_NAME,

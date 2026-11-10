@@ -10,3 +10,4 @@
 - [Temporary render recovery safety](temporary-render-recovery.md) — favor retaining ambiguous folders over deleting potentially active work.
 - [Workspace hook tests](workspace-hook-tests.md) — real generated hooks can expose duplicate React peers that hook mocks conceal.
 - [Test clock isolation](test-clock-isolation.md) — use one owner for mocked timer globals; overlapping mock trackers can leak fake timers into later tests.
+- [Better Stack ingestion credentials](better-stack-ingestion-credentials.md) — provider management access is separate from the source token the API needs to ship logs.
