@@ -13,6 +13,7 @@ vi.mock('../src/hooks/useMovieExportHistory', async importOriginal => ({
 }));
 vi.mock('@workspace/api-client-react', async importOriginal => ({
   ...await importOriginal<object>(),
+  useGetStudioExportStorage: () => ({ data: { knownSizeBytes: 0, savedMovieCount: 0, unknownSizeCount: 0 } }),
   preflightStudioExport: vi.fn(async () => ({ canQueue: true })),
   usePreflightStudioExport: () => ({ data: { canQueue: true, cards: 1, cardLimit: 2000, playbackSeconds: 10, playbackLimitSeconds: 21600 }, isPending: false, isError: false }),
   useListStudioExports: () => ({ data: api.jobs, isError: false }),

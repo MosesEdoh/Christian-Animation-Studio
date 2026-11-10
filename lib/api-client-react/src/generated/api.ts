@@ -57,6 +57,7 @@ import type {
   StudioExport,
   StudioExportInput,
   StudioExportPreflight,
+  StudioExportStorage,
   TrustedDeviceEnrollment,
   TrustedDeviceEnrollmentInput,
   TrustedDeviceRevocation,
@@ -493,6 +494,84 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
       > => {
       return useMutation(getCreateStudioExportMutationOptions(options));
     }
+
+export const getGetStudioExportStorageUrl = () => {
+
+
+
+
+  return `/api/studio/exports/storage`
+}
+
+/**
+ * Requires approved studio access. Counts ready exports with a stored object, across the entire shared studio history. Known bytes exclude missing or invalid recorded sizes; unknownSizeCount must be shown alongside the subtotal. Does not include temporary renders or other studio media.
+ * @summary Saved movie storage across all history pages
+ */
+export const getStudioExportStorage = async ( options?: Parameters<typeof customFetch>[1]): Promise<StudioExportStorage> => {
+
+  return customFetch<StudioExportStorage>(getGetStudioExportStorageUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getGetStudioExportStorageQueryKey = () => {
+    return [
+    `/api/studio/exports/storage`
+    ] as const;
+    }
+
+
+export const getGetStudioExportStorageQueryOptions = <TData = Awaited<ReturnType<typeof getStudioExportStorage>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStudioExportStorage>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getGetStudioExportStorageQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof getStudioExportStorage>>> = ({ signal }) => getStudioExportStorage({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof getStudioExportStorage>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type GetStudioExportStorageQueryResult = NonNullable<Awaited<ReturnType<typeof getStudioExportStorage>>>
+export type GetStudioExportStorageQueryError = ErrorType<void>
+
+
+/**
+ * @summary Saved movie storage across all history pages
+ */
+
+export function useGetStudioExportStorage<TData = Awaited<ReturnType<typeof getStudioExportStorage>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof getStudioExportStorage>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getGetStudioExportStorageQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
 
 export const getPreflightStudioExportUrl = (params: PreflightStudioExportParams,) => {
   const normalizedParams = new URLSearchParams();

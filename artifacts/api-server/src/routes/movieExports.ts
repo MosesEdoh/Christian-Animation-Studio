@@ -1,14 +1,27 @@
 import { Router } from "express";
-import { and, desc, eq, inArray, lt } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, lt, sql } from "drizzle-orm";
 import { db, studioExportsTable, studioEpisodesTable } from "@workspace/db";
 import { CreateStudioExportBody, CreateStudioExportResponse, ListStudioExportsQueryParams, ListStudioExportsResponse, DownloadStudioExportParams, CancelStudioExportParams, CancelStudioExportResponse, DeleteStudioExportParams } from "@workspace/api-zod";
 import { cancelMovieExport, exportView, wakeMovieWorker } from "../lib/movieRenderer";
 import { ObjectNotFoundError, ObjectStorageService } from "../lib/objectStorage";
 import { streamPrivateMedia } from "../lib/privateMedia";
-import { PreflightStudioExportQueryParams, PreflightStudioExportResponse } from "@workspace/api-zod";
+import { GetStudioExportStorageResponse, PreflightStudioExportQueryParams, PreflightStudioExportResponse } from "@workspace/api-zod";
 import { estimateMovie } from "../lib/moviePreflight";
 
 const router = Router();
+router.get("/studio/exports/storage", async (_req, res): Promise<void> => {
+  // The parent /studio guard is identical to history and deletion. Aggregate in
+  // the database, never over a limited page or by loading all history into RAM.
+  const knownSize = sql`${studioExportsTable.sizeBytes} between 0 and 9007199254740991`;
+  const [summary] = await db.select({
+    knownSizeBytes: sql`coalesce(sum(${studioExportsTable.sizeBytes}) filter (where ${knownSize}), 0)`.mapWith(Number),
+    savedMovieCount: sql`count(*)`.mapWith(Number),
+    unknownSizeCount: sql`count(*) filter (where ${studioExportsTable.sizeBytes} is null or not (${knownSize}))`.mapWith(Number),
+  }).from(studioExportsTable).where(and(
+    eq(studioExportsTable.status, "ready"), isNotNull(studioExportsTable.objectPath),
+  ));
+  res.json(GetStudioExportStorageResponse.parse(summary));
+});
 router.get("/studio/exports/preflight", async (req, res): Promise<void> => {
   const parsed = PreflightStudioExportQueryParams.safeParse(req.query);
   if (!parsed.success) { res.status(400).json({ error: "Choose a valid episode and orientation." }); return; }

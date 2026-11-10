@@ -64,6 +64,7 @@ export * from './studioExportInputQuality';
 export * from './studioExportPreflight';
 export * from './studioExportQuality';
 export * from './studioExportStatus';
+export * from './studioExportStorage';
 export * from './trustedDeviceEnrollment';
 export * from './trustedDeviceEnrollmentInput';
 export * from './trustedDeviceEnrollmentInputPlatform';

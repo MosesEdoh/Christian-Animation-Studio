@@ -5,6 +5,26 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+export interface StudioExportStorage {
+  /**
+     * Sum of valid recorded sizes only. A subtotal when unknownSizeCount is nonzero.
+     * @minimum 0
+     * @maximum 9007199254740991
+     */
+  knownSizeBytes: number;
+  /**
+     * @minimum 0
+     * @maximum 9007199254740991
+     */
+  savedMovieCount: number;
+  /**
+     * Saved movies without a valid recorded size.
+     * @minimum 0
+     * @maximum 9007199254740991
+     */
+  unknownSizeCount: number;
+}
+
 export interface StudioExportPreflight {
   canQueue: boolean;
   message: string;

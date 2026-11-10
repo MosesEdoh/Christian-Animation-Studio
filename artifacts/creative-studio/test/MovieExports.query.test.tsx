@@ -30,6 +30,7 @@ let unexpectedRequests: string[];
 let olderPageFails: boolean;
 let deletionFails: boolean;
 let listFails: boolean;
+let storageFails: boolean;
 
 function json(value: unknown, status = 200) {
   return new Response(JSON.stringify(value), {
@@ -42,7 +43,7 @@ beforeEach(() => {
   saved = [];
   requests = [];
   unexpectedRequests = [];
-  olderPageFails = deletionFails = listFails = false;
+  olderPageFails = deletionFails = listFails = storageFails = false;
   createResponse = async () => {
     saved = [queued];
     return json(queued, 201);
@@ -62,6 +63,15 @@ beforeEach(() => {
     const path = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
     const method = init?.method ?? 'GET';
     requests.push({ method, path, body: init?.body });
+    if (method === 'GET' && path === `${exportsPath}/storage`) {
+      if (storageFails) return json({ error: 'Storage summary unavailable' }, 500);
+      const ready = saved.filter(job => job.status === 'ready' && job.url);
+      return json({
+        knownSizeBytes: ready.reduce((total, job) => total + (job.sizeBytes ?? 0), 0),
+        savedMovieCount: ready.length,
+        unknownSizeCount: ready.filter(job => job.sizeBytes == null).length,
+      });
+    }
     if (method === 'GET' && (path === exportsPath || path.startsWith(`${exportsPath}?`))) {
       const cursor = new URL(path, 'http://test').searchParams.get('beforeId');
       if (cursor && olderPageFails) return json({ error: 'History temporarily unavailable' }, 503);
@@ -113,6 +123,53 @@ describe('MovieExports with generated queries and mocked HTTP', () => {
     ...queued, id: 205 - index, status: 'ready', progress: 100,
     url: `${exportsPath}/${205 - index}/file`,
   }));
+
+  it('shows storage across unloaded pages, unknown sizes, and refreshes immediately after deletion', async () => {
+    vi.spyOn(window, 'confirm').mockReturnValue(true);
+    saved = history().map(job => ({ ...job, sizeBytes: job.id === 1 ? null : 1_000_000 }));
+    mount();
+    await advance(10);
+    const summary = screen.getByTestId('movie-storage-summary');
+    expect(screen.queryByTestId('movie-job-1')).not.toBeInTheDocument();
+    expect(summary).toHaveTextContent('Known-size subtotal: 204 MB · 205 saved movies');
+    expect(summary).toHaveTextContent('1 saved movie has an unknown size');
+    expect(summary).toHaveTextContent('Total storage is incomplete');
+    fireEvent.click(screen.getByTestId('delete-movie-205'));
+    await advance(10);
+    expect(summary).toHaveTextContent('Known-size subtotal: 203 MB · 204 saved movies');
+    deletionFails = true;
+    fireEvent.click(screen.getByTestId('delete-movie-204'));
+    await advance(10);
+    expect(summary).toHaveTextContent('Known-size subtotal: 203 MB · 204 saved movies');
+  });
+
+  it('polls storage for newly finished movies even outside the loaded history', async () => {
+    saved = [...history(), { ...queued, id: 0 }];
+    mount();
+    await advance(10);
+    const summary = screen.getByTestId('movie-storage-summary');
+    expect(summary).toHaveTextContent('205 saved movies');
+    saved = saved.map(job => ({ ...job, status: 'ready', sizeBytes: 1_000_000, url: `${exportsPath}/${job.id}/file` }));
+    await advance(3000);
+    expect(summary).toHaveTextContent('Total saved movie storage: 206 MB · 206 saved movies');
+    expect(summary).toHaveTextContent('All saved movie sizes are known');
+    expect(screen.queryByTestId('movie-job-0')).not.toBeInTheDocument();
+  });
+
+  it('shows empty storage and hides stale totals on failure, with an immediate retry', async () => {
+    mount();
+    await advance(10);
+    const summary = screen.getByTestId('movie-storage-summary');
+    expect(summary).toHaveTextContent('Total saved movie storage: 0 bytes · 0 saved movies');
+    storageFails = true;
+    await advance(3000);
+    expect(summary).toHaveTextContent('Totals are unavailable');
+    expect(summary).not.toHaveTextContent('Total saved movie storage:');
+    storageFails = false;
+    fireEvent.click(screen.getByRole('button', { name: 'Retry storage summary' }));
+    await advance(10);
+    expect(summary).toHaveTextContent('Total saved movie storage: 0 bytes');
+  });
 
   it('loads older pages, preserves selection through polling, and deletes across all cached pages', async () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true);
@@ -420,6 +477,7 @@ describe('MovieExports with generated queries and mocked HTTP', () => {
     expect(requests.map(({ method, path }) => `${method} ${path}`)).toEqual([
       'GET /api/studio/exports/preflight?aspectRatio=16%3A9',
       'GET /api/studio/exports',
+      'GET /api/studio/exports/storage',
       'GET /api/studio/exports/preflight?aspectRatio=16%3A9',
       'POST /api/studio/exports',
       'GET /api/studio/exports',

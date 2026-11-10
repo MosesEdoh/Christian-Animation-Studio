@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
-import { getPreflightStudioExportQueryKey, preflightStudioExport, usePreflightStudioExport, useCancelStudioExport, useCreateStudioExport, useDeleteStudioExport, getListStudioExportsQueryKey, type Episode, type StudioExport } from '@workspace/api-client-react';
+import { getGetStudioExportStorageQueryKey, useGetStudioExportStorage, getPreflightStudioExportQueryKey, preflightStudioExport, usePreflightStudioExport, useCancelStudioExport, useCreateStudioExport, useDeleteStudioExport, getListStudioExportsQueryKey, type Episode, type StudioExport } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { updateMovieExportCaches, useMovieExportHistory } from '../hooks/useMovieExportHistory';
 import { movieSizeLabel } from '../lib/movieSize';
@@ -67,6 +67,10 @@ function AccountMovieExports({ episodes, accountId, projectId }: MovieExportsPro
     setEpisodeId(value);
   }
   const jobs = useMovieExportHistory();
+  const storage = useGetStudioExportStorage({ query: {
+    queryKey: [...getGetStudioExportStorageQueryKey(), accountId, projectId],
+    staleTime: 0, refetchInterval: 3000, retry: false,
+  } });
   useEffect(() => {
     if (!batch) return;
     const reconciled = reconcileMovieBatch(batch, jobs.jobs);
@@ -89,6 +93,9 @@ function AccountMovieExports({ episodes, accountId, projectId }: MovieExportsPro
       await cache.cancelQueries({ queryKey: getListStudioExportsQueryKey() });
       updateMovieExportCaches(cache, previous => previous.filter(saved => saved.id !== job.id));
       setSelectedId(previous => previous === job.id ? null : previous);
+      // Discard a pre-deletion summary response before asking for fresh totals.
+      await cache.cancelQueries({ queryKey: getGetStudioExportStorageQueryKey() });
+      await cache.invalidateQueries({ queryKey: getGetStudioExportStorageQueryKey() });
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Could not delete movie. Please try again.');
     } finally {
@@ -227,6 +234,20 @@ function AccountMovieExports({ episodes, accountId, projectId }: MovieExportsPro
         catch (cause) { setError((cause as Error).message); }
       }}>Dismiss batch summary</button>
     </div>}
+    <div aria-live="polite" data-testid="movie-storage-summary" style={{ marginTop: 16 }}>
+      <h3>Saved movie storage</h3>
+      <p className="row-caption">Across all history pages · saved storyboard MP4s only, not temporary renders or other media.</p>
+      {storage.isPending && <p>Loading saved movie storage…</p>}
+      {storage.isError ? <p role="alert">Could not refresh saved movie storage. Totals are unavailable. <button onClick={() => storage.refetch()}>Retry storage summary</button></p>
+        : storage.data && <>
+          <p title={`${storage.data.knownSizeBytes.toLocaleString()} recorded bytes`}>
+            {storage.data.unknownSizeCount > 0 ? 'Known-size subtotal' : 'Total saved movie storage'}: {movieSizeLabel(storage.data.knownSizeBytes)} · {storage.data.savedMovieCount.toLocaleString()} saved {storage.data.savedMovieCount === 1 ? 'movie' : 'movies'}.
+          </p>
+          <p>{storage.data.unknownSizeCount > 0
+            ? `${storage.data.unknownSizeCount.toLocaleString()} saved ${storage.data.unknownSizeCount === 1 ? 'movie has an unknown size' : 'movies have unknown sizes'} and ${storage.data.unknownSizeCount === 1 ? 'is' : 'are'} not included in the subtotal. Total storage is incomplete.`
+            : 'All saved movie sizes are known.'}</p>
+        </>}
+    </div>
     {jobs.isPending && <p role="status">Loading movie exports…</p>}
     {jobs.isError && !jobs.isFetchNextPageError && <p role="alert">Could not load movie exports. <button onClick={() => jobs.refetch()}>Retry</button></p>}
     {selected?.url && <div style={{ marginTop: 20 }}>

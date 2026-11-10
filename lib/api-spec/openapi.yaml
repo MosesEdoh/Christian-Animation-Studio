@@ -148,6 +148,24 @@ paths:
           description: Request ID was already used with a different episode, orientation, or resolution
         "429":
           description: Movie queue is full
+  /studio/exports/storage:
+    get:
+      operationId: getStudioExportStorage
+      tags: [studio]
+      summary: Saved movie storage across all history pages
+      description: Requires approved studio access. Counts ready exports with a stored object, across the entire shared studio history. Known bytes exclude missing or invalid recorded sizes; unknownSizeCount must be shown alongside the subtotal. Does not include temporary renders or other studio media.
+      responses:
+        "200":
+          description: Current saved movie storage, independent of pagination
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StudioExportStorage" }
+        "401":
+          description: Sign-in required
+        "403":
+          description: Approved studio access required
+        "500":
+          description: Storage summary unavailable
   /studio/exports/preflight:
     get:
       operationId: preflightStudioExport
@@ -640,6 +658,24 @@ components:
       schema:
         type: integer
   schemas:
+    StudioExportStorage:
+      type: object
+      required: [knownSizeBytes, savedMovieCount, unknownSizeCount]
+      properties:
+        knownSizeBytes:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+          description: Sum of valid recorded sizes only. A subtotal when unknownSizeCount is nonzero.
+        savedMovieCount:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+        unknownSizeCount:
+          type: integer
+          minimum: 0
+          maximum: 9007199254740991
+          description: Saved movies without a valid recorded size.
     StudioExportPreflight:
       type: object
       required: [canQueue, message, cards, playbackSeconds, cardLimit, playbackLimitSeconds]

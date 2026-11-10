@@ -31,6 +31,8 @@ vi.mock('@workspace/api-client-react', async () => {
     getPreflightStudioExportQueryKey: (params: unknown) => ['/api/studio/exports/preflight', params],
     usePreflightStudioExport: () => ({ data: api.estimate, isPending: api.checking, isError: api.estimateError, refetch: api.refetch }),
     getListStudioExportsQueryKey: () => ['/api/studio/exports'],
+    getGetStudioExportStorageQueryKey: () => ['/api/studio/exports/storage'],
+    useGetStudioExportStorage: () => ({ data: { knownSizeBytes: 0, savedMovieCount: 0, unknownSizeCount: 0 } }),
     useListStudioExports: () => ({
       data: api.jobs, isError: api.listError, refetch: api.refetch,
     }),

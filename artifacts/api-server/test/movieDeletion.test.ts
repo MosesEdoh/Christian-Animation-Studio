@@ -34,7 +34,7 @@ beforeEach(() => {
   storageError = undefined;
   databaseError = false;
   signedIn = trustedDevice = true;
-  mock.method(db, "select", () => ({
+  mock.method(db, "select", (selection?: Record<string, SQL>) => ({
     from: (table: unknown) => table === usersTable
       ? { where: () => ({ limit: async () => [{ id: "creator" }] }) }
       : table === studioTrustedDevicesTable
@@ -42,6 +42,22 @@ beforeEach(() => {
             limit: async () => dialect.sqlToQuery(predicate).params[0] === deviceTokenHash ? [{ id: 1 }] : [],
           }) }
         : { where: (predicate?: SQL) => {
+        if (selection?.knownSizeBytes) {
+          assert.ok(predicate);
+          const filter = dialect.sqlToQuery(predicate);
+          assert.deepEqual(filter.params, ["ready"]);
+          assert.match(filter.sql, /"object_path" is not null/);
+          assert.match(dialect.sqlToQuery(selection.knownSizeBytes).sql, /coalesce\(sum\(.+\) filter \(where .+ between 0 and 9007199254740991\), 0\)/);
+          assert.match(dialect.sqlToQuery(selection.savedMovieCount).sql, /count\(\*\)/);
+          assert.match(dialect.sqlToQuery(selection.unknownSizeCount).sql, /is null or not/);
+          const saved = rows.filter(row => row.status === "ready" && row.objectPath !== null);
+          const known = saved.filter(row => row.sizeBytes !== null && Number.isSafeInteger(row.sizeBytes) && row.sizeBytes >= 0);
+          return Promise.resolve([{
+            knownSizeBytes: known.reduce((total, row) => total + row.sizeBytes!, 0),
+            savedMovieCount: saved.length,
+            unknownSizeCount: saved.length - known.length,
+          }]);
+        }
         const query = predicate ? dialect.sqlToQuery(predicate) : undefined;
         if (!query || query.sql.includes(" < ")) {
           const page = rows.filter(row => !query || row.id < Number(query.params[0])).sort((a, b) => b.id - a.id);
@@ -67,6 +83,49 @@ beforeEach(() => {
   });
 });
 afterEach(() => mock.restoreAll());
+
+test("storage totals span all pages and distinguish unknown sizes from zero", async () => {
+  rows = Array.from({ length: 205 }, (_, i) => ({ ...job(i + 1, "ready"), sizeBytes: 3_000_000_000 }));
+  rows[0].sizeBytes = null; // Outside the first two pages.
+  rows[1].sizeBytes = 0;
+  rows.push(job(206, "queued", null), job(207, "rendering", null), job(208, "failed", null),
+    job(209, "cancelled", null), job(210, "ready", null));
+  assert.equal((await (await request("?limit=100", "GET")).json()).length, 100);
+  assert.deepEqual(await (await request("storage", "GET")).json(), {
+    knownSizeBytes: 203 * 3_000_000_000, savedMovieCount: 205, unknownSizeCount: 1,
+  });
+  assert.equal((await request("3")).status, 204);
+  assert.deepEqual(await (await request("storage", "GET")).json(), {
+    knownSizeBytes: 202 * 3_000_000_000, savedMovieCount: 204, unknownSizeCount: 1,
+  });
+  assert.equal((await request("1")).status, 204);
+  assert.deepEqual(await (await request("storage", "GET")).json(), {
+    knownSizeBytes: 202 * 3_000_000_000, savedMovieCount: 203, unknownSizeCount: 0,
+  });
+});
+
+test("storage handles empty history, all unknown sizes, invalid sizes, and completed renders", async () => {
+  rows = [];
+  assert.deepEqual(await (await request("storage", "GET")).json(), {
+    knownSizeBytes: 0, savedMovieCount: 0, unknownSizeCount: 0,
+  });
+  rows = [job(1, "ready"), { ...job(2, "ready"), sizeBytes: -1 }, job(3, "rendering", null)];
+  assert.deepEqual(await (await request("storage", "GET")).json(), {
+    knownSizeBytes: 0, savedMovieCount: 2, unknownSizeCount: 2,
+  });
+  rows[2] = { ...job(3, "ready"), sizeBytes: 1_234_567 };
+  assert.deepEqual(await (await request("storage", "GET")).json(), {
+    knownSizeBytes: 1_234_567, savedMovieCount: 3, unknownSizeCount: 2,
+  });
+});
+
+test("storage summary requires sign-in and a trusted studio device", async () => {
+  signedIn = false;
+  assert.equal((await request("storage", "GET")).status, 401);
+  signedIn = true;
+  trustedDevice = false;
+  assert.equal((await request("storage", "GET")).status, 403);
+});
 
 test("movie history exposes known sizes and explicit null for historical exports, then removes deleted sizes", async () => {
   rows = [{ ...job(2, "ready"), sizeBytes: 3_000_000_000 }, job(1, "ready")];

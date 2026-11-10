@@ -122,6 +122,28 @@ export const CreateStudioExportResponse = zod.object({
 })
 
 
+/**
+ * Requires approved studio access. Counts ready exports with a stored object, across the entire shared studio history. Known bytes exclude missing or invalid recorded sizes; unknownSizeCount must be shown alongside the subtotal. Does not include temporary renders or other studio media.
+ * @summary Saved movie storage across all history pages
+ */
+export const getStudioExportStorageResponseKnownSizeBytesMin = 0;
+export const getStudioExportStorageResponseKnownSizeBytesMax = 9007199254740991;
+
+export const getStudioExportStorageResponseSavedMovieCountMin = 0;
+export const getStudioExportStorageResponseSavedMovieCountMax = 9007199254740991;
+
+export const getStudioExportStorageResponseUnknownSizeCountMin = 0;
+export const getStudioExportStorageResponseUnknownSizeCountMax = 9007199254740991;
+
+
+
+export const GetStudioExportStorageResponse = zod.object({
+  "knownSizeBytes": zod.int().min(getStudioExportStorageResponseKnownSizeBytesMin).max(getStudioExportStorageResponseKnownSizeBytesMax).describe('Sum of valid recorded sizes only. A subtotal when unknownSizeCount is nonzero.'),
+  "savedMovieCount": zod.int().min(getStudioExportStorageResponseSavedMovieCountMin).max(getStudioExportStorageResponseSavedMovieCountMax),
+  "unknownSizeCount": zod.int().min(getStudioExportStorageResponseUnknownSizeCountMin).max(getStudioExportStorageResponseUnknownSizeCountMax).describe('Saved movies without a valid recorded size.')
+})
+
+
 
 
 
