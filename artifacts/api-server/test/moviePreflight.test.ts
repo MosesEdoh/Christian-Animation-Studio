@@ -25,7 +25,9 @@ let fail: boolean;
 let readDelayMs: number;
 let allocatedText: number;
 let textReads: number;
+let fetchedScripts: Map<number, string>;
 let beforeTextRead: (() => void) | undefined;
+// Model PostgreSQL length/left, not JS UTF-16 length/slice.
 const length = (text: string) => Array.from(text).length;
 
 beforeEach(() => {
@@ -47,6 +49,7 @@ beforeEach(() => {
   signedIn = trustedDevice = true;
   reads = 0; fail = false;
   readDelayMs = allocatedText = textReads = 0;
+  fetchedScripts = new Map();
   beforeTextRead = undefined;
   mock.method(preflightDb, "select", (projection: Record<string, unknown>) => ({
     from: (table: unknown) => ({
@@ -71,11 +74,15 @@ beforeEach(() => {
             allocatedText += [...caps.values()].reduce((sum, cap) => sum + cap, 0);
             assert.ok(allocatedText <= textBudget, "aggregate text caps stay within one budget across all batches");
             assert.deepEqual(Object.keys(projection).sort(), ["id", "scriptLength", "text"], "never fetch reference URLs or files");
-            return scenes.filter(row => values.includes(row.id)).slice(0, count).reverse().map(row => ({
-              id: row.id,
-              scriptLength: Math.min(length(row.text), textBudget + 1),
-              text: Array.from(row.text).slice(0, caps.get(row.id) ?? 0).join(""),
-            }));
+            return scenes.filter(row => values.includes(row.id)).slice(0, count).reverse().map(row => {
+              const text = Array.from(row.text).slice(0, caps.get(row.id) ?? 0).join("");
+              fetchedScripts.set(row.id, text);
+              return {
+                id: row.id,
+                scriptLength: Math.min(length(row.text), textBudget + 1),
+                text,
+              };
+            });
           }
           assert.equal(count, movieLimits.frames + 1);
           return scenes.filter(row => values.includes(row.episodeId)).slice(0, count).map(row => ({
@@ -215,6 +222,187 @@ test("rejects growing or deleted scripts rather than estimating capped or missin
     allocatedText = 0;
   }
 });
+
+function rendererEstimate(portrait: boolean) {
+  let cards = episodes.length + 1;
+  let playbackSeconds = episodes.length * 6 + 7;
+  for (const scene of scenes) {
+    const layout = movieScenePages({ content: scene.text, synopsis: "" }, portrait);
+    cards += layout.pageCount;
+    for (let page = 0; page < layout.pageCount; page++) {
+      playbackSeconds += moviePageSeconds(scene.duration, layout.pageCount,
+        layout.lines.slice(page * layout.pageSize, (page + 1) * layout.pageSize));
+    }
+  }
+  return { cards, playbackSeconds };
+}
+
+function assertCompleteScripts() {
+  assert.equal(fetchedScripts.size, scenes.length);
+  for (const scene of scenes) {
+    assert.equal(fetchedScripts.get(scene.id), scene.text, `scene ${scene.id} retains every code point`);
+  }
+  const codePoints = scenes.reduce((sum, scene) => sum + length(scene.text), 0);
+  const utf16Units = scenes.reduce((sum, scene) => sum + scene.text.length, 0);
+  assert.equal(allocatedText, codePoints, "caps allocate code points, not UTF-16 units");
+  assert.ok(allocatedText <= textBudget, "one fetch allowance covers every batch");
+  assert.ok(utf16Units <= allocatedText * 2, "even supplementary characters have a bounded UTF-16 payload");
+}
+
+for (const aspectRatio of ["16:9", "9:16"] as const) {
+  const portrait = aspectRatio === "9:16";
+  const width = portrait ? 46 : 43;
+  const pageSize = portrait ? 18 : 13;
+
+  test(`${aspectRatio}: multilingual and emoji dialogue survives three batches at wrap and page boundaries`, async () => {
+    const dialogue = [
+      "神は愛です。平安がありますように。",
+      "السلام عليكم ورحمة الله",
+      "नमस्ते दुनिया",
+      "cafe\u0301, espérance et paix",
+      "👨‍👩‍👧‍👦 🙏🏽 ❤️ 😀🚀",
+    ];
+    scenes = Array.from({ length: 201 }, (_, index) => ({
+      id: index + 1, episodeId: 7, duration: "1",
+      text: dialogue[index % dialogue.length]!.repeat(index % 7 + 1),
+    }));
+    // Put boundary cases on both sides of the 100-row batch transitions.
+    for (const [index, units] of [[0, width - 1], [99, width], [100, width + 1]] as const) {
+      const text = "😀".repeat(Math.floor(units / 2)) + (units % 2 ? "祈" : "");
+      scenes[index]!.text = text;
+      assert.equal(text.length, units);
+      assert.equal(movieScenePages({ content: text, synopsis: "" }, portrait).lines.length, units > width ? 2 : 1);
+    }
+    for (const [index, lineCount] of [[98, pageSize - 1], [199, pageSize], [200, pageSize + 1]] as const) {
+      scenes[index]!.text = Array(lineCount).fill("祈り🙏🏽").join("\n");
+      assert.equal(movieScenePages({ content: scenes[index]!.text, synopsis: "" }, portrait).pageCount,
+        lineCount > pageSize ? 2 : 1);
+    }
+    const expected = rendererEstimate(portrait);
+    const result = await estimateMovie(7, aspectRatio);
+    assert.equal(result?.canQueue, true);
+    assert.equal(result?.cards, expected.cards);
+    assert.equal(result?.playbackSeconds, expected.playbackSeconds);
+    assert.equal(textReads, 3);
+    assert.equal(reads, 5);
+    assertCompleteScripts();
+    assert.ok(scenes.some(scene => scene.text.length > length(scene.text)));
+  });
+
+  for (const extra of [0, 1]) {
+    test(`${aspectRatio}: multilingual dialogue ${extra ? "above" : "at"} the card limit agrees with layout across batches`, async () => {
+      scenes = Array.from({ length: 101 }, (_, index) => ({
+        id: index + 1, episodeId: 7, duration: "1", text: "سلام🙏",
+      }));
+      const finalPages = movieLimits.frames - 2 - 100;
+      scenes[100]!.text = Array(finalPages * pageSize + extra).fill("祈り🙏🏽").join("\n");
+      const expected = rendererEstimate(portrait);
+      assert.equal(expected.cards, movieLimits.frames + extra);
+      assert.ok(expected.playbackSeconds < movieLimits.playbackSeconds);
+      const result = await estimateMovie(7, aspectRatio);
+      assert.equal(result?.canQueue, extra === 0);
+      if (extra) {
+        assert.match(result!.message, /2000 storyboard card limit/);
+        assert.match(result!.message, /Nothing will be split or shortened automatically/);
+      } else {
+        assert.equal(result?.cards, expected.cards);
+        assert.equal(result?.playbackSeconds, expected.playbackSeconds);
+      }
+      assert.equal(textReads, 2);
+      assertCompleteScripts();
+    });
+
+    test(`${aspectRatio}: emoji dialogue ${extra ? "above" : "at"} the playback limit agrees with layout across batches`, async () => {
+      scenes = Array.from({ length: 101 }, (_, index) => ({
+        id: index + 1, episodeId: 7, duration: "1", text: "祈り🙏",
+      }));
+      scenes[100]!.duration = String(movieLimits.playbackSeconds - 13 - 100 * 5 + extra);
+      const expected = rendererEstimate(portrait);
+      assert.equal(expected.playbackSeconds, movieLimits.playbackSeconds + extra);
+      const result = await estimateMovie(7, aspectRatio);
+      assert.equal(result?.canQueue, extra === 0);
+      if (extra) {
+        assert.match(result!.message, /6 hour playback limit/);
+        assert.match(result!.message, /Nothing will be split or shortened automatically/);
+      } else {
+        assert.equal(result?.cards, expected.cards);
+        assert.equal(result?.playbackSeconds, expected.playbackSeconds);
+      }
+      assert.equal(textReads, 2);
+      assertCompleteScripts();
+    });
+
+    test(`${aspectRatio}: aggregate UTF-16 text ${extra ? "above" : "at"} the allowance cannot hide behind smaller code-point caps`, async () => {
+      const prefix = "你好 مرحبا cafe\u0301 " + "😀🚀🙏🏽".repeat(24);
+      scenes = Array.from({ length: 101 }, (_, index) => {
+        const units = index === 100 ? textBudget - 100 * 17000 + extra : 17000;
+        return {
+          id: index + 1, episodeId: 7, duration: "1",
+          // Padding consumes the text allowance without hitting card/time limits.
+          text: prefix + " ".repeat(units - prefix.length),
+        };
+      });
+      assert.equal(scenes.reduce((sum, scene) => sum + scene.text.length, 0), textBudget + extra);
+      assert.ok(scenes.reduce((sum, scene) => sum + length(scene.text), 0) < textBudget);
+      const expected = rendererEstimate(portrait);
+      assert.ok(expected.cards < movieLimits.frames);
+      assert.ok(expected.playbackSeconds < movieLimits.playbackSeconds);
+      const result = await estimateMovie(7, aspectRatio);
+      assert.equal(result?.canQueue, extra === 0);
+      if (extra) {
+        assert.match(result!.message, /saved script text exceeds the bounded movie estimate/);
+        assert.match(result!.message, /Nothing will be split or shortened automatically/);
+      } else {
+        assert.equal(result?.cards, expected.cards);
+        assert.equal(result?.playbackSeconds, expected.playbackSeconds);
+      }
+      assert.equal(textReads, 2, "UTF-16 exhaustion occurs in the second batch");
+      assertCompleteScripts();
+    });
+
+    test(`${aspectRatio}: per-scene UTF-16 text ${extra ? "above" : "at"} the layout guard is never silently shortened`, async () => {
+      scenes = Array.from({ length: 101 }, (_, index) => ({
+        id: index + 1, episodeId: 7, duration: "1", text: "",
+      }));
+      const units = movieLimits.frames * 18 * (width + 2) + extra;
+      const prefix = "你好 مرحبا cafe\u0301 " + "😀".repeat(32);
+      scenes[100]!.text = prefix + " ".repeat(units - prefix.length);
+      assert.ok(length(scenes[100]!.text) < textBudget, "PG metadata alone admits the script");
+      const result = await estimateMovie(7, aspectRatio);
+      assert.equal(result?.canQueue, extra === 0);
+      if (extra) {
+        assert.throws(() => rendererEstimate(portrait), /Movie script text is too large/);
+        // Portrait reaches the aggregate JS guard first; landscape reaches wrapMovieText.
+        assert.match(result!.message, /script text (?:is too large|exceeds)/);
+        assert.match(result!.message, /Nothing will be split or shortened automatically/);
+      } else {
+        const expected = rendererEstimate(portrait);
+        assert.equal(result?.cards, expected.cards);
+        assert.equal(result?.playbackSeconds, expected.playbackSeconds);
+      }
+      assert.equal(textReads, 2);
+      assertCompleteScripts();
+    });
+  }
+
+  test(`${aspectRatio}: emoji growth in the second batch rejects capped dialogue and stops further reads`, async () => {
+    scenes = Array.from({ length: 201 }, (_, index) => ({
+      id: index + 1, episodeId: 7, duration: "1", text: "你好🙏",
+    }));
+    const original = scenes[100]!.text;
+    beforeTextRead = () => {
+      if (textReads === 2) scenes[100]!.text += "👨‍👩‍👧‍👦".repeat(1000);
+    };
+    const result = await estimateMovie(7, aspectRatio);
+    assert.equal(result?.canQueue, false);
+    assert.match(result!.message, /script changed.*Check again/);
+    assert.equal(fetchedScripts.get(101), original, "SQL left caps the changed row at its original code-point length");
+    assert.notEqual(fetchedScripts.get(101), scenes[100]!.text);
+    assert.equal(textReads, 2, "never fetch the third batch after discovering truncated dialogue");
+    assert.equal(allocatedText, 200 * length(original));
+    assert.ok(allocatedText <= textBudget);
+  });
+}
 
 test("all batches share the five-second deadline and stop on cancellation", async () => {
   const controller = new AbortController();
