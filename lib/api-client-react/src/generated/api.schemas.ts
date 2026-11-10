@@ -592,6 +592,7 @@ export type DownloadStudioEpisodeVideo503Code = typeof DownloadStudioEpisodeVide
 
 export const DownloadStudioEpisodeVideo503Code = {
   EPISODE_EXPORT_BUSY: 'EPISODE_EXPORT_BUSY',
+  EPISODE_EXPORT_ADMISSION_UNAVAILABLE: 'EPISODE_EXPORT_ADMISSION_UNAVAILABLE',
 } as const;
 
 export type DownloadStudioEpisodeVideo503 = {

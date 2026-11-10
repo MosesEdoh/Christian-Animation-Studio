@@ -10,7 +10,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createRequire } from "node:module";
 import { Writable } from "node:stream";
-import { episodeExportAdmission, acquireEpisodeExportLease, type EpisodeAdmissionStore } from "../src/lib/episodeExportAdmission";
+import {
+  episodeExportAdmission, acquireEpisodeExportLease, EpisodeExportAdmissionError,
+  type EpisodeAdmissionStore,
+} from "../src/lib/episodeExportAdmission";
 import {
   assembleEpisodeVideo, EpisodeVideoUnavailableError, removeEpisodeVideo,
   EpisodeVideoBusyError, MAX_CONCURRENT_EPISODE_EXPORTS, EPISODE_EXPORT_RETRY_SECONDS,
@@ -247,6 +250,7 @@ test("the HTTP handler streams MP4/report headers and returns exact unavailable 
   const { default: router } = await import("../src/routes/studio");
   const handler = router.stack.find(layer => layer.route?.path === "/studio/episodes/:id/video")!.route.stack[0].handle;
   let selectedClips = [clip(1)];
+  let providerRequests = 0;
   mock.method(db, "select", (() => ({
     from(table: unknown) {
       if (table === studioEpisodesTable) return { where: async () => [{ id: 1, number: 8 }] };
@@ -280,6 +284,7 @@ test("the HTTP handler streams MP4/report headers and returns exact unavailable 
       params: { id: "1" }, log: { error() { warnings++; } },
     });
     mock.method(globalThis, "fetch", async (_input, init) => {
+      providerRequests++;
       providerSignal = init?.signal;
       if (disconnect === "fetch" || disconnect === "request" || disconnect === "timeout") {
         return new Promise<Response>((_resolve, reject) => {
@@ -304,6 +309,31 @@ test("the HTTP handler streams MP4/report headers and returns exact unavailable 
     usedClipIds: [1], skippedClips: [],
   });
   assert.ok(ready.bytes.length > 0);
+  const previousAcquire = episodeExportAdmission.acquire;
+  let admissionChecks = 0;
+  mock.method(episodeExportAdmission, "acquire", async () => {
+    if (admissionChecks++ === 0) throw new EpisodeExportAdmissionError();
+    return previousAcquire();
+  });
+  const beforeAdmissionFailure = await episodeDirectories();
+  const requestsBeforeAdmissionFailure = providerRequests;
+  const admissionUnavailable = await invoke();
+  assert.equal(admissionUnavailable.status, 503);
+  assert.deepEqual(admissionUnavailable.json, {
+    error: "Episode export capacity is temporarily unavailable. Please retry in 15 seconds.",
+    code: "EPISODE_EXPORT_ADMISSION_UNAVAILABLE",
+    retryAfterSeconds: 15,
+  });
+  assert.equal(admissionUnavailable.headers.get("Retry-After"), "15");
+  assert.equal(admissionUnavailable.headers.get("Cache-Control"), "private, no-store");
+  assert.equal(admissionUnavailable.bytes.length, 0);
+  assert.equal(admissionUnavailable.warnings, 1);
+  assert.equal(providerRequests, requestsBeforeAdmissionFailure, "admission failure must not download media");
+  assert.deepEqual(await episodeDirectories(), beforeAdmissionFailure, "admission failure must not leave partial output");
+  const admissionRetry = await invoke();
+  assert.equal(admissionRetry.status, 200, "a later request should proceed when admission recovers");
+  assert.ok(admissionRetry.bytes.length > 0);
+  assert.equal(providerRequests, requestsBeforeAdmissionFailure + 1);
   selectedClips = [clip(1, { url: "https://localhost/private" }), clip(2, { url: null })];
   const unavailable = await invoke();
   assert.equal(unavailable.status, 422);

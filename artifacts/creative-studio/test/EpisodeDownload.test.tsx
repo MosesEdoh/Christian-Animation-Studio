@@ -39,6 +39,23 @@ describe('EpisodeDownload controls', () => {
     expect(download).toHaveBeenCalledTimes(2);
   });
 
+  it('shows capacity-check outages as retryable and succeeds on a later attempt', async () => {
+    const message = 'Episode export capacity is temporarily unavailable. Please retry in 15 seconds.';
+    download.mockResolvedValueOnce({ failed: true, retryable: true, message, skippedClips: [] })
+      .mockResolvedValueOnce(success);
+    render(<EpisodeDownload episode={episode} hasClips />);
+    fireEvent.click(button());
+    expect(await screen.findByText(message)).toBeVisible();
+    expect(button()).toBeEnabled();
+    expect(button()).toHaveTextContent('Retry MP4');
+    expect(screen.queryByRole('button', { name: 'Cancel episode 3 export' })).not.toBeInTheDocument();
+
+    fireEvent.click(button());
+    expect(await screen.findByText(success.message)).toBeVisible();
+    expect(button()).toHaveTextContent('Download MP4');
+    expect(download).toHaveBeenCalledTimes(2);
+  });
+
   it('cancels immediately, allows retry, and ignores a stale completion', async () => {
     let finish!: (result: EpisodeDownloadResult) => void;
     let retryFinish!: (result: EpisodeDownloadResult) => void;

@@ -1008,6 +1008,14 @@ router.get("/studio/episodes/:id/video", async (req, res): Promise<void> => {
         outcome: "admission_unavailable",
         route: "provider_clip",
       }, "Provider-clip export could not check shared capacity");
+      res.setHeader("Retry-After", String(EPISODE_EXPORT_RETRY_SECONDS));
+      res.setHeader("Cache-Control", "private, no-store");
+      res.status(503).json({
+        error: `Episode export capacity is temporarily unavailable. Please retry in ${EPISODE_EXPORT_RETRY_SECONDS} seconds.`,
+        code: "EPISODE_EXPORT_ADMISSION_UNAVAILABLE",
+        retryAfterSeconds: EPISODE_EXPORT_RETRY_SECONDS,
+      } satisfies DownloadStudioEpisodeVideo503);
+      return;
     }
     if (!(error instanceof EpisodeExportAdmissionError)) {
       req.log.error({ err: error, episodeId }, "Episode video assembly failed");

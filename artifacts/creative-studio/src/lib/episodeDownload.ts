@@ -5,6 +5,7 @@ export type EpisodeDownloadResult = {
   skippedClips: EpisodeVideoIssue[];
   failed?: boolean;
   busy?: boolean;
+  retryable?: boolean;
 };
 
 function readIssues(value: unknown): EpisodeVideoIssue[] {
@@ -38,6 +39,18 @@ export async function downloadEpisodeVideo(
           failed: true,
           busy: true,
           message: `Episode exports are busy. Try again in ${retryAfter} seconds. Your export was not queued.`,
+          skippedClips: [],
+        };
+      }
+      if (response.status === 503 && failure.code === 'EPISODE_EXPORT_ADMISSION_UNAVAILABLE') {
+        const seconds = Number(response.headers.get('retry-after') ?? failure.retryAfterSeconds);
+        const retryAfter = Number.isInteger(seconds) && seconds > 0 && seconds <= 300 ? seconds : 15;
+        return {
+          failed: true,
+          retryable: true,
+          message: typeof failure.error === 'string'
+            ? failure.error
+            : `Episode export capacity is temporarily unavailable. Please retry in ${retryAfter} seconds.`,
           skippedClips: [],
         };
       }

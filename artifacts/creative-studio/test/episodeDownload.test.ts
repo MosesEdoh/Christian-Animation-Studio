@@ -192,6 +192,32 @@ test('busy admission shows a retry delay without saving, polling, or queueing', 
   assert.equal(env.clicks(), 1);
 });
 
+test('an unavailable capacity check is shown as retryable without saving partial output', async () => {
+  const env = browser();
+  const message = 'Episode export capacity is temporarily unavailable. Please retry in 15 seconds.';
+  const requests = mock.method(globalThis, 'fetch', async () => new Response(JSON.stringify({
+    error: message,
+    code: 'EPISODE_EXPORT_ADMISSION_UNAVAILABLE',
+    retryAfterSeconds: 15,
+  }), { status: 503, headers: { 'retry-after': '15' } }));
+
+  const result = await downloadEpisodeVideo(episode);
+  assert.equal(result.failed, true);
+  assert.equal(result.retryable, true);
+  assert.equal(result.message, message);
+  assert.deepEqual(result.skippedClips, []);
+  assert.equal(env.createUrl.mock.callCount(), 0);
+  assert.equal(env.anchors.length, 0);
+  assert.equal(env.clicks(), 0);
+  assert.equal(requests.mock.callCount(), 1);
+
+  mock.method(globalThis, 'fetch', async () => mp4());
+  const retry = await downloadEpisodeVideo(episode);
+  assert.equal(retry.failed, undefined);
+  assert.match(retry.message, /download started/);
+  assert.equal(env.clicks(), 1);
+});
+
 test('empty videos and HTML responses never trigger a download', async () => {
   const env = browser();
   mock.method(globalThis, 'fetch', async () => new Response('', {
