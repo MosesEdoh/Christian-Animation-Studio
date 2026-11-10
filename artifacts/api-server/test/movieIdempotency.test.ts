@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { after, afterEach, before, beforeEach, mock, test } from "node:test";
 import { randomUUID } from "node:crypto";
+import { fork, type ChildProcess } from "node:child_process";
+import { once } from "node:events";
+import { setTimeout as delay } from "node:timers/promises";
 import express from "express";
 import { drizzle } from "drizzle-orm/node-postgres";
 import { eq } from "drizzle-orm";
@@ -65,6 +68,127 @@ const request = (data: unknown = input) => fetch(`${origin}/api/studio/exports`,
   method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data),
 });
 const count = async () => (await isolatedDb.select().from(studioExportsTable)).length;
+
+type WorkerMessage = {
+  kind: string;
+  origin?: string;
+  pid?: number;
+  backendPid?: number;
+  headersSent?: boolean;
+  job?: { id: number; requestId: string; status: string };
+};
+function startApiProcess(gated = false) {
+  const child = fork(new URL("./fixtures/movieIdempotencyServer.ts", import.meta.url), [
+    schema, gated ? "gated" : "ungated",
+  ], { execArgv: ["--import", "tsx"], stdio: ["ignore", "ignore", "inherit", "ipc"] });
+  const messages: WorkerMessage[] = [];
+  child.on("message", message => messages.push(message as WorkerMessage));
+  const waitFor = async (kind: string) => {
+    for (let attempt = 0; attempt < 1000; attempt++) {
+      const message = messages.find(message => message.kind === kind);
+      if (message) return message;
+      assert.equal(child.exitCode, null, `API process exited waiting for ${kind}`);
+      assert.equal(child.signalCode, null, `API process was killed waiting for ${kind}`);
+      await delay(10);
+    }
+    assert.fail(`Timed out waiting for API process message: ${kind}`);
+  };
+  return { child, waitFor };
+}
+async function stopApiProcess(child: ChildProcess) {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const exited = once(child, "exit");
+  assert.ok(child.kill("SIGKILL"));
+  await exited;
+}
+const processRequest = (origin: string, data: unknown = input, withholdResponse = false) =>
+  fetch(`${origin}/api/studio/exports`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "x-test-withhold-response": String(withholdResponse) },
+    body: JSON.stringify(data),
+    signal: AbortSignal.timeout(15_000),
+  });
+
+test("independent API processes arbitrate simultaneous request IDs in PostgreSQL", { timeout: 30_000 }, async t => {
+  const workers = [startApiProcess(true), startApiProcess(true)];
+  t.after(() => Promise.all(workers.map(worker => stopApiProcess(worker.child))));
+  const ready = await Promise.all(workers.map(worker => worker.waitFor("ready")));
+  assert.notEqual(ready[0].pid, ready[1].pid);
+  assert.notEqual(ready[0].backendPid, ready[1].backendPid);
+  const origins = ready.map(message => message.origin!);
+  // Attach rejection handlers immediately, including if setup fails.
+  const pending = origins.map(origin => processRequest(origin).then(
+    response => ({ response }), error => ({ error }),
+  ));
+  await Promise.all(workers.map(worker => worker.waitFor("insert-ready")));
+  workers.forEach(worker => worker.child.send({ command: "release-inserts" }));
+  const jobs = await Promise.all(pending.map(async request => {
+    const result = await request;
+    if ("error" in result) throw result.error;
+    assert.equal(result.response.status, 202);
+    return result.response.json();
+  }));
+  assert.equal(jobs[0].id, jobs[1].id);
+  assert.equal(jobs[0].requestId, input.requestId);
+  assert.equal(jobs[1].requestId, input.requestId);
+  assert.equal(await count(), 1);
+
+  // Both instances enforce input identity, even when the loser replays.
+  for (const origin of origins) {
+    for (const change of [{ episodeId: 1 }, { aspectRatio: "9:16" }, { quality: "1080p" }]) {
+      assert.equal((await processRequest(origin, { ...input, ...change })).status, 409);
+    }
+  }
+  assert.equal(await count(), 1);
+  const deliberate = await processRequest(origins[1], { ...input, requestId: "cross-process-new" });
+  assert.equal(deliberate.status, 202);
+  assert.notEqual((await deliberate.json()).id, jobs[0].id);
+  assert.equal(await count(), 2);
+});
+
+test("a fresh API process recovers a committed movie after its predecessor dies before delivery", { timeout: 30_000 }, async t => {
+  const first = startApiProcess();
+  t.after(() => stopApiProcess(first.child));
+  const originalReady = await first.waitFor("ready");
+  const lostResponse = processRequest(originalReady.origin!, input, true).then(
+    () => { throw new Error("The interrupted request must not receive a response"); },
+    error => error,
+  );
+  const accepted = await first.waitFor("accepted-without-delivery");
+  assert.equal(accepted.headersSent, false);
+  assert.ok(accepted.job);
+  const [persisted] = await isolatedDb.select().from(studioExportsTable);
+  assert.equal(persisted.id, accepted.job.id);
+  assert.equal(persisted.requestId, input.requestId);
+  assert.equal(persisted.status, "queued");
+  await stopApiProcess(first.child);
+  assert.equal(first.child.signalCode, "SIGKILL");
+  const deliveryError = await lostResponse;
+  assert.equal(deliveryError.name, "TypeError", "socket loss, not the request timeout, must interrupt delivery");
+
+  // Start only after the original process exits: no shared module state,
+  // connection, worker flag, or cached response can satisfy this replay.
+  const replacement = startApiProcess();
+  t.after(() => stopApiProcess(replacement.child));
+  const restarted = await replacement.waitFor("ready");
+  assert.notEqual(restarted.pid, originalReady.pid);
+  assert.notEqual(restarted.backendPid, originalReady.backendPid);
+  const recovered = await processRequest(restarted.origin!);
+  assert.equal(recovered.status, 202);
+  const job = await recovered.json();
+  assert.equal(job.id, persisted.id);
+  assert.equal(job.requestId, input.requestId);
+  assert.equal(job.status, persisted.status);
+  assert.equal(await count(), 1);
+  for (const change of [{ episodeId: 1 }, { aspectRatio: "9:16" }, { quality: "1080p" }]) {
+    assert.equal((await processRequest(restarted.origin!, { ...input, ...change })).status, 409);
+  }
+  assert.equal(await count(), 1);
+  const deliberate = await processRequest(restarted.origin!, { ...input, requestId: "after-restart-new" });
+  assert.equal(deliberate.status, 202);
+  assert.notEqual((await deliberate.json()).id, persisted.id);
+  assert.equal(await count(), 2);
+});
 
 for (const status of ["queued", "rendering", "ready", "failed", "cancelled"] as const) {
   test(`a lost response recovers the original ${status} job`, async () => {
