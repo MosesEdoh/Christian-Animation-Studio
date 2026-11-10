@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import { randomUUID } from 'expo-crypto';
 import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native';
-import { getGetStudioBootstrapQueryKey, useGetStudioBootstrap, getListStudioExportsQueryKey, useCreateStudioExport, useGenerateShotClip } from '@workspace/api-client-react';
+import { getGetStudioBootstrapQueryKey, useGetStudioBootstrap, getListStudioExportsQueryKey, useCreateStudioExport, useGenerateShotClip, type StudioExportInput } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useColors } from '@/hooks/useColors';
 import { PrivateVideo } from '@/components/PrivateVideo';
@@ -21,6 +22,11 @@ export default function ClipsScreen() {
   const [durationSeconds, setDurationSeconds] = useState(5);
   const [useReference, setUseReference] = useState(false);
   const [error, setError] = useState('');
+  const [queuing, setQueuing] = useState(false);
+  const queueRunning = useRef(false);
+  // Keep each scope's unfinished batch, including its unconfirmed request.
+  // Confirmed formats are removed so a partial retry cannot rebuild them.
+  const unfinishedBatches = useRef(new Map<number | null, StudioExportInput[]>());
   const query = useGetStudioBootstrap({ query: { queryKey: getGetStudioBootstrapQueryKey() } });
   const exports = useMovieExportHistory();
   const create = useCreateStudioExport();
@@ -64,13 +70,33 @@ export default function ClipsScreen() {
     }
   }
   async function queue() {
+    if (queueRunning.current) return;
+    queueRunning.current = true;
+    setQueuing(true);
     setError('');
     try {
-      for (const aspectRatio of ['16:9', '9:16'] as const) for (const quality of ['720p', '1080p'] as const) {
-        await create.mutateAsync({ data: { episodeId, aspectRatio, quality } });
+      let remaining = unfinishedBatches.current.get(episodeId);
+      if (!remaining) {
+        remaining = (['16:9', '9:16'] as const).flatMap(aspectRatio =>
+          (['720p', '1080p'] as const).map(quality => ({
+            episodeId, aspectRatio, quality, requestId: randomUUID(),
+          })));
+        unfinishedBatches.current.set(episodeId, remaining);
       }
-      await cache.invalidateQueries({ queryKey: getListStudioExportsQueryKey() });
-    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Could not build movie'); }
+      while (remaining.length) {
+        await create.mutateAsync({ data: remaining[0] });
+        remaining.shift();
+      }
+      // A subsequent press is a deliberate rebuild, with fresh IDs.
+      unfinishedBatches.current.delete(episodeId);
+    } catch (cause) {
+      setError(`${cause instanceof Error ? cause.message : 'Could not build movie'}. Retry the build to safely continue the unfinished formats.`);
+    } finally {
+      queueRunning.current = false;
+      setQueuing(false);
+      // Partial successes should appear even if a later response was lost.
+      void cache.invalidateQueries({ queryKey: getListStudioExportsQueryKey() });
+    }
   }
   if (query.isLoading) return <ActivityIndicator color={colors.primary} />;
   if (query.isError || !query.data) return <View><Text style={{ color: colors.foreground }}>Studio unavailable.</Text><Pressable onPress={() => query.refetch()}><Text>Retry</Text></Pressable></View>;
@@ -145,7 +171,7 @@ export default function ClipsScreen() {
     <Pressable style={button} onPress={() => setEpisodeId(null)}><Text style={{ color: colors.foreground }}>{episodeId === null ? '✓ ' : ''}Entire series · one MP4</Text></Pressable>
     {query.data.episodes.map(episode => <Pressable key={episode.id} style={button} onPress={() => setEpisodeId(episode.id)}><Text style={{ color: colors.foreground }}>{episodeId === episode.id ? '✓ ' : ''}Episode {episode.number}: {episode.title}</Text></Pressable>)}
     {selectedEpisode ? <VoicedEpisodePreview episodeId={selectedEpisode.id} episodeTitle={`${selectedEpisode.number}: ${selectedEpisode.title}`} hasClips={hasReadyEpisodeClips} /> : null}
-    <Pressable disabled={create.isPending} style={{ ...button, backgroundColor: colors.primary }} onPress={queue}><Text style={{ color: colors.primaryForeground, fontWeight: '700' }}>{create.isPending ? 'Queuing…' : 'Build MP4 · both orientations & resolutions'}</Text></Pressable>
+    <Pressable testID="mobile-build-movies" accessibilityRole="button" accessibilityState={{ disabled: queuing }} disabled={queuing} style={{ ...button, backgroundColor: colors.primary }} onPress={queue}><Text style={{ color: colors.primaryForeground, fontWeight: '700' }}>{queuing ? 'Queuing…' : unfinishedBatches.current.has(episodeId) ? 'Retry MP4 build · unfinished formats' : 'Build MP4 · both orientations & resolutions'}</Text></Pressable>
     <Text style={{ color: colors.foreground, fontSize: 22, fontFamily: 'Fraunces_600SemiBold' }}>Saved movies</Text>
     <Pressable testID="mobile-refresh-movies" accessibilityRole="button" accessibilityState={{ disabled: exports.isFetching }} disabled={exports.isFetching} style={button} onPress={() => { if (!exports.isFetching) void exports.refetch(); }}><Text style={{ color: colors.foreground }}>{exports.isRefetching ? 'Refreshing movies…' : 'Refresh movies'}</Text></Pressable>
     {exports.isLoading && <ActivityIndicator testID="mobile-movies-loading" color={colors.primary} />}

@@ -15,6 +15,8 @@ vi.mock('react-native', () => ({
     <button data-testid={testID} onClick={onPress} disabled={disabled} aria-pressed={accessibilityState?.selected}>{children}</button>,
 }));
 vi.mock('@/hooks/useColors', () => ({ useColors: () => ({}) }));
+vi.mock('expo-crypto', () => ({ randomUUID: () => crypto.randomUUID() }));
+vi.mock('@/components/VoicedEpisodePreview', () => ({ VoicedEpisodePreview: () => null }));
 vi.mock('@/components/KeyboardAwareScrollViewCompat', () => ({
   KeyboardAwareScrollViewCompat: ({ children }: any) => <main>{children}</main>,
 }));
@@ -48,7 +50,7 @@ beforeEach(() => {
   globalThis.fetch = vi.fn(async input => {
     const url = new URL(String(input));
     if (url.pathname === '/api/studio/bootstrap') return Response.json({
-      episodes: [], shots: [], clips: [],
+      episodes: [], scenes: [], shots: [], clips: [],
     });
     if (url.pathname !== '/api/studio/exports') throw new Error(`Unexpected request: ${url}`);
     const cursor = url.searchParams.has('beforeId') ? Number(url.searchParams.get('beforeId')) : undefined;
