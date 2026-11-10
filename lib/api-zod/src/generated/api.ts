@@ -45,6 +45,101 @@ export const RevokeStudioTrustedDeviceResponse = zod.object({
 
 
 /**
+ * @summary List child profiles managed by the signed-in guardian
+ */
+export const listStudioChildProfilesResponseDisplayNameMax = 40;
+
+
+
+export const ListStudioChildProfilesResponseItem = zod.object({
+  "id": zod.int(),
+  "displayName": zod.string().min(1).max(listStudioChildProfilesResponseDisplayNameMax),
+  "ageBand": zod.enum(['5-8', '9-12', '13-17']),
+  "status": zod.enum(['active', 'paused']),
+  "childSafeMode": zod.literal(true),
+  "guardianConsentAt": zod.coerce.date(),
+  "guardianNoticeVersion": zod.string(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})
+export const ListStudioChildProfilesResponse = zod.array(ListStudioChildProfilesResponseItem)
+
+
+/**
+ * @summary Create a guardian-managed child profile
+ */
+export const createStudioChildProfileBodyDisplayNameMax = 40;
+
+
+
+export const CreateStudioChildProfileBody = zod.object({
+  "displayName": zod.string().min(1).max(createStudioChildProfileBodyDisplayNameMax),
+  "ageBand": zod.enum(['5-8', '9-12', '13-17']),
+  "guardianConsent": zod.literal(true)
+})
+
+export const createStudioChildProfileResponseDisplayNameMax = 40;
+
+
+
+export const CreateStudioChildProfileResponse = zod.object({
+  "id": zod.int(),
+  "displayName": zod.string().min(1).max(createStudioChildProfileResponseDisplayNameMax),
+  "ageBand": zod.enum(['5-8', '9-12', '13-17']),
+  "status": zod.enum(['active', 'paused']),
+  "childSafeMode": zod.literal(true),
+  "guardianConsentAt": zod.coerce.date(),
+  "guardianNoticeVersion": zod.string(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Update or pause a child profile owned by this guardian
+ */
+export const UpdateStudioChildProfileParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const updateStudioChildProfileBodyDisplayNameMax = 40;
+
+
+
+export const UpdateStudioChildProfileBody = zod.object({
+  "displayName": zod.string().min(1).max(updateStudioChildProfileBodyDisplayNameMax).optional(),
+  "ageBand": zod.enum(['5-8', '9-12', '13-17']).optional(),
+  "status": zod.enum(['active', 'paused']).optional()
+})
+
+export const updateStudioChildProfileResponseDisplayNameMax = 40;
+
+
+
+export const UpdateStudioChildProfileResponse = zod.object({
+  "id": zod.int(),
+  "displayName": zod.string().min(1).max(updateStudioChildProfileResponseDisplayNameMax),
+  "ageBand": zod.enum(['5-8', '9-12', '13-17']),
+  "status": zod.enum(['active', 'paused']),
+  "childSafeMode": zod.literal(true),
+  "guardianConsentAt": zod.coerce.date(),
+  "guardianNoticeVersion": zod.string(),
+  "createdAt": zod.coerce.date(),
+  "updatedAt": zod.coerce.date()
+})
+
+
+/**
+ * @summary Remove a child profile owned by this guardian
+ */
+export const DeleteStudioChildProfileParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const DeleteStudioChildProfileResponse = zod.void()
+
+
+/**
  * Movies ordered by descending ID. Request older pages using beforeId set to the last returned ID. A page shorter than limit means the end of history; a full page may be followed by an empty page. ID cursors remain valid after deletion.
  */
 export const listStudioExportsQueryBeforeIdMax = 2147483647;

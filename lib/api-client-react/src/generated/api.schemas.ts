@@ -5,6 +5,85 @@
  * API specification
  * OpenAPI spec version: 0.1.0
  */
+export type ChildProfileAgeBand = typeof ChildProfileAgeBand[keyof typeof ChildProfileAgeBand];
+
+
+export const ChildProfileAgeBand = {
+  '5-8': '5-8',
+  '9-12': '9-12',
+  '13-17': '13-17',
+} as const;
+
+export type ChildProfileStatus = typeof ChildProfileStatus[keyof typeof ChildProfileStatus];
+
+
+export const ChildProfileStatus = {
+  active: 'active',
+  paused: 'paused',
+} as const;
+
+export interface ChildProfile {
+  id: number;
+  /**
+     * @minLength 1
+     * @maxLength 40
+     */
+  displayName: string;
+  ageBand: ChildProfileAgeBand;
+  status: ChildProfileStatus;
+  childSafeMode: true;
+  guardianConsentAt: string;
+  guardianNoticeVersion: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export type ChildProfileInputAgeBand = typeof ChildProfileInputAgeBand[keyof typeof ChildProfileInputAgeBand];
+
+
+export const ChildProfileInputAgeBand = {
+  '5-8': '5-8',
+  '9-12': '9-12',
+  '13-17': '13-17',
+} as const;
+
+export interface ChildProfileInput {
+  /**
+     * @minLength 1
+     * @maxLength 40
+     */
+  displayName: string;
+  ageBand: ChildProfileInputAgeBand;
+  guardianConsent: true;
+}
+
+export type ChildProfileUpdateAgeBand = typeof ChildProfileUpdateAgeBand[keyof typeof ChildProfileUpdateAgeBand];
+
+
+export const ChildProfileUpdateAgeBand = {
+  '5-8': '5-8',
+  '9-12': '9-12',
+  '13-17': '13-17',
+} as const;
+
+export type ChildProfileUpdateStatus = typeof ChildProfileUpdateStatus[keyof typeof ChildProfileUpdateStatus];
+
+
+export const ChildProfileUpdateStatus = {
+  active: 'active',
+  paused: 'paused',
+} as const;
+
+export interface ChildProfileUpdate {
+  /**
+     * @minLength 1
+     * @maxLength 40
+     */
+  displayName?: string;
+  ageBand?: ChildProfileUpdateAgeBand;
+  status?: ChildProfileUpdateStatus;
+}
+
 export interface StudioExportStorage {
   /**
      * Sum of valid recorded sizes only. A subtotal when unknownSizeCount is nonzero.

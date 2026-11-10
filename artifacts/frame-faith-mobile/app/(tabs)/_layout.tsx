@@ -29,6 +29,10 @@ function NativeTabLayout() {
         <NativeTabs.Trigger.Icon sf={{ default: 'play.rectangle', selected: 'play.rectangle.fill' }} />
         <NativeTabs.Trigger.Label>Clips</NativeTabs.Trigger.Label>
       </NativeTabs.Trigger>
+      <NativeTabs.Trigger name="family">
+        <NativeTabs.Trigger.Icon sf={{ default: 'person.2', selected: 'person.2.fill' }} />
+        <NativeTabs.Trigger.Label>Family</NativeTabs.Trigger.Label>
+      </NativeTabs.Trigger>
     </NativeTabs>
   );
 }
@@ -89,6 +93,7 @@ function ClassicTabLayout() {
       />
       <Tabs.Screen name="stories" options={{ title: 'Stories', tabBarIcon: ({ color }) => <Feather name="book-open" size={22} color={typeof color === 'string' ? color : colors.mutedForeground} /> }} />
       <Tabs.Screen name="clips" options={{ title: 'Clips', tabBarIcon: ({ color }) => <Feather name="film" size={22} color={typeof color === 'string' ? color : colors.mutedForeground} /> }} />
+      <Tabs.Screen name="family" options={{ title: 'Family', tabBarIcon: ({ color }) => <Feather name="users" size={22} color={typeof color === 'string' ? color : colors.mutedForeground} /> }} />
     </Tabs>
   );
 }

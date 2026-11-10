@@ -28,6 +28,9 @@ import type {
   Character,
   CharacterInput,
   CharacterUpdate,
+  ChildProfile,
+  ChildProfileInput,
+  ChildProfileUpdate,
   Clip,
   ContentCheckResult,
   DownloadStudioEpisodeVideo503,
@@ -330,6 +333,334 @@ export const useRevokeStudioTrustedDevice = <TError = ErrorType<ErrorEnvelope>,
         TContext
       > => {
       return useMutation(getRevokeStudioTrustedDeviceMutationOptions(options));
+    }
+
+export const getListStudioChildProfilesUrl = () => {
+
+
+
+
+  return `/api/studio/child-profiles`
+}
+
+/**
+ * @summary List child profiles managed by the signed-in guardian
+ */
+export const listStudioChildProfiles = async ( options?: Parameters<typeof customFetch>[1]): Promise<ChildProfile[]> => {
+
+  return customFetch<ChildProfile[]>(getListStudioChildProfilesUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListStudioChildProfilesQueryKey = () => {
+    return [
+    `/api/studio/child-profiles`
+    ] as const;
+    }
+
+
+export const getListStudioChildProfilesQueryOptions = <TData = Awaited<ReturnType<typeof listStudioChildProfiles>>, TError = ErrorType<void>>( options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listStudioChildProfiles>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListStudioChildProfilesQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listStudioChildProfiles>>> = ({ signal }) => listStudioChildProfiles({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listStudioChildProfiles>>, TError, TData> & { queryKey: QueryKey }
+}
+
+export type ListStudioChildProfilesQueryResult = NonNullable<Awaited<ReturnType<typeof listStudioChildProfiles>>>
+export type ListStudioChildProfilesQueryError = ErrorType<void>
+
+
+/**
+ * @summary List child profiles managed by the signed-in guardian
+ */
+
+export function useListStudioChildProfiles<TData = Awaited<ReturnType<typeof listStudioChildProfiles>>, TError = ErrorType<void>>(
+  options?: { query?:UseQueryOptions<Awaited<ReturnType<typeof listStudioChildProfiles>>, TError, TData>, request?: SecondParameter<typeof customFetch>}
+
+ ):  UseQueryResult<TData, TError> & { queryKey: QueryKey } {
+
+  const queryOptions = getListStudioChildProfilesQueryOptions(options)
+
+  const query = useQuery(queryOptions) as  UseQueryResult<TData, TError> & { queryKey: QueryKey };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreateStudioChildProfileUrl = () => {
+
+
+
+
+  return `/api/studio/child-profiles`
+}
+
+/**
+ * @summary Create a guardian-managed child profile
+ */
+export const createStudioChildProfile = async (childProfileInput: ChildProfileInput, options?: Parameters<typeof customFetch>[1]): Promise<ChildProfile> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<ChildProfile>(getCreateStudioChildProfileUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(childProfileInput)
+  }
+);}
+
+
+
+
+
+export const getCreateStudioChildProfileMutationKey = () => ['createStudioChildProfile'] as const;
+
+export const getCreateStudioChildProfileMutationOptions = <TError = ErrorType<ErrorEnvelope | void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createStudioChildProfile>>, TError,CreateStudioChildProfileMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createStudioChildProfile>>, TError,CreateStudioChildProfileMutationVariables, TContext> => {
+
+const mutationKey = getCreateStudioChildProfileMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createStudioChildProfile>>, CreateStudioChildProfileMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  createStudioChildProfile(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreateStudioChildProfileMutationResult = NonNullable<Awaited<ReturnType<typeof createStudioChildProfile>>>
+    export type CreateStudioChildProfileMutationBody = BodyType<ChildProfileInput>
+    export type CreateStudioChildProfileMutationError = ErrorType<ErrorEnvelope | void>
+    export type CreateStudioChildProfileMutationVariables = {data: BodyType<ChildProfileInput>}
+
+    /**
+ * @summary Create a guardian-managed child profile
+ */
+export const useCreateStudioChildProfile = <TError = ErrorType<ErrorEnvelope | void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createStudioChildProfile>>, TError,CreateStudioChildProfileMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof createStudioChildProfile>>,
+        TError,
+        CreateStudioChildProfileMutationVariables,
+        TContext
+      > => {
+      return useMutation(getCreateStudioChildProfileMutationOptions(options));
+    }
+
+export const getUpdateStudioChildProfileUrl = (id: number,) => {
+
+
+
+
+  return `/api/studio/child-profiles/${id}`
+}
+
+/**
+ * @summary Update or pause a child profile owned by this guardian
+ */
+export const updateStudioChildProfile = async (id: number,
+    childProfileUpdate: ChildProfileUpdate, options?: Parameters<typeof customFetch>[1]): Promise<ChildProfile> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<ChildProfile>(getUpdateStudioChildProfileUrl(id),
+  {
+    ...options,
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(childProfileUpdate)
+  }
+);}
+
+
+
+
+
+export const getUpdateStudioChildProfileMutationKey = () => ['updateStudioChildProfile'] as const;
+
+export const getUpdateStudioChildProfileMutationOptions = <TError = ErrorType<ErrorEnvelope>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateStudioChildProfile>>, TError,UpdateStudioChildProfileMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof updateStudioChildProfile>>, TError,UpdateStudioChildProfileMutationVariables, TContext> => {
+
+const mutationKey = getUpdateStudioChildProfileMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof updateStudioChildProfile>>, UpdateStudioChildProfileMutationVariables> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  updateStudioChildProfile(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type UpdateStudioChildProfileMutationResult = NonNullable<Awaited<ReturnType<typeof updateStudioChildProfile>>>
+    export type UpdateStudioChildProfileMutationBody = BodyType<ChildProfileUpdate>
+    export type UpdateStudioChildProfileMutationError = ErrorType<ErrorEnvelope>
+    export type UpdateStudioChildProfileMutationVariables = {id: number;data: BodyType<ChildProfileUpdate>}
+
+    /**
+ * @summary Update or pause a child profile owned by this guardian
+ */
+export const useUpdateStudioChildProfile = <TError = ErrorType<ErrorEnvelope>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof updateStudioChildProfile>>, TError,UpdateStudioChildProfileMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof updateStudioChildProfile>>,
+        TError,
+        UpdateStudioChildProfileMutationVariables,
+        TContext
+      > => {
+      return useMutation(getUpdateStudioChildProfileMutationOptions(options));
+    }
+
+export const getDeleteStudioChildProfileUrl = (id: number,) => {
+
+
+
+
+  return `/api/studio/child-profiles/${id}`
+}
+
+/**
+ * @summary Remove a child profile owned by this guardian
+ */
+export const deleteStudioChildProfile = async (id: number, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
+
+  return customFetch<void>(getDeleteStudioChildProfileUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteStudioChildProfileMutationKey = () => ['deleteStudioChildProfile'] as const;
+
+export const getDeleteStudioChildProfileMutationOptions = <TError = ErrorType<ErrorEnvelope>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteStudioChildProfile>>, TError,DeleteStudioChildProfileMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteStudioChildProfile>>, TError,DeleteStudioChildProfileMutationVariables, TContext> => {
+
+const mutationKey = getDeleteStudioChildProfileMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteStudioChildProfile>>, DeleteStudioChildProfileMutationVariables> = (props) => {
+          const {id} = props ?? {};
+
+          return  deleteStudioChildProfile(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteStudioChildProfileMutationResult = NonNullable<Awaited<ReturnType<typeof deleteStudioChildProfile>>>
+
+    export type DeleteStudioChildProfileMutationError = ErrorType<ErrorEnvelope>
+    export type DeleteStudioChildProfileMutationVariables = {id: number}
+
+    /**
+ * @summary Remove a child profile owned by this guardian
+ */
+export const useDeleteStudioChildProfile = <TError = ErrorType<ErrorEnvelope>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteStudioChildProfile>>, TError,DeleteStudioChildProfileMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ ): UseMutationResult<
+        Awaited<ReturnType<typeof deleteStudioChildProfile>>,
+        TError,
+        DeleteStudioChildProfileMutationVariables,
+        TContext
+      > => {
+      return useMutation(getDeleteStudioChildProfileMutationOptions(options));
     }
 
 export const getListStudioExportsUrl = (params?: ListStudioExportsParams,) => {

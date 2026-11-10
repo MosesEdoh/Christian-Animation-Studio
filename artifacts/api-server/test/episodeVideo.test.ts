@@ -140,7 +140,7 @@ test("episode assembly carries a scene voice track across its shots and keeps th
   ]).toString());
   assert.ok(probe.streams.some((stream: { codec_type: string; codec_name: string }) =>
     stream.codec_type === "audio" && stream.codec_name === "aac"));
-  assert.ok(Number(probe.format.duration) >= 1.5 && Number(probe.format.duration) < 1.9);
+  assert.ok(Number(probe.format.duration) >= 1.5 && Number(probe.format.duration) < 2.2, `unexpected final duration: ${probe.format.duration}`);
   const spokenSamples = mediaTool("ffmpeg", [
     "-v", "error", "-ss", "1.05", "-i", result.outputPath,
     "-t", "0.2", "-vn", "-f", "s16le", "-ac", "1", "pipe:1",

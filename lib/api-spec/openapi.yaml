@@ -103,6 +103,94 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/ErrorEnvelope"
+  /studio/child-profiles:
+    get:
+      operationId: listStudioChildProfiles
+      tags: [studio]
+      summary: List child profiles managed by the signed-in guardian
+      responses:
+        "200":
+          description: Profiles owned by this guardian only
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ChildProfile" }
+        "401":
+          description: Sign-in is required
+        "403":
+          description: Verified email and trusted device are required
+    post:
+      operationId: createStudioChildProfile
+      tags: [studio]
+      summary: Create a guardian-managed child profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChildProfileInput" }
+      responses:
+        "201":
+          description: Profile created under the signed-in guardian
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChildProfile" }
+        "400":
+          description: Invalid profile or guardian notice not acknowledged
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "401":
+          description: Sign-in is required
+        "403":
+          description: Verified email and trusted device are required
+  /studio/child-profiles/{id}:
+    patch:
+      operationId: updateStudioChildProfile
+      tags: [studio]
+      summary: Update or pause a child profile owned by this guardian
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChildProfileUpdate" }
+      responses:
+        "200":
+          description: Updated profile
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChildProfile" }
+        "400":
+          description: Invalid profile update
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "404":
+          description: Profile not found for this guardian
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+    delete:
+      operationId: deleteStudioChildProfile
+      tags: [studio]
+      summary: Remove a child profile owned by this guardian
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "204":
+          description: Profile removed
+        "400":
+          description: Invalid profile ID
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
+        "404":
+          description: Profile not found for this guardian
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ErrorEnvelope" }
   /studio/exports:
     get:
       operationId: listStudioExports
@@ -658,6 +746,33 @@ components:
       schema:
         type: integer
   schemas:
+    ChildProfile:
+      type: object
+      properties:
+        id: { type: integer }
+        displayName: { type: string, minLength: 1, maxLength: 40 }
+        ageBand: { type: string, enum: ["5-8", "9-12", "13-17"] }
+        status: { type: string, enum: [active, paused] }
+        childSafeMode: { type: boolean, const: true }
+        guardianConsentAt: { type: string, format: date-time }
+        guardianNoticeVersion: { type: string }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+      required: [id, displayName, ageBand, status, childSafeMode, guardianConsentAt, guardianNoticeVersion, createdAt, updatedAt]
+    ChildProfileInput:
+      type: object
+      properties:
+        displayName: { type: string, minLength: 1, maxLength: 40 }
+        ageBand: { type: string, enum: ["5-8", "9-12", "13-17"] }
+        guardianConsent: { type: boolean, const: true }
+      required: [displayName, ageBand, guardianConsent]
+    ChildProfileUpdate:
+      type: object
+      minProperties: 1
+      properties:
+        displayName: { type: string, minLength: 1, maxLength: 40 }
+        ageBand: { type: string, enum: ["5-8", "9-12", "13-17"] }
+        status: { type: string, enum: [active, paused] }
     StudioExportStorage:
       type: object
       required: [knownSizeBytes, savedMovieCount, unknownSizeCount]

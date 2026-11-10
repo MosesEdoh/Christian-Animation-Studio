@@ -5,6 +5,7 @@ import { useUser } from '@clerk/react';
 import { ClerkProviderWithRoutes, ClerkQueryClientCacheInvalidator, SignInPage, SignUpPage, LogoutButton } from './components/ClerkAuth';
 import { MovieExports } from './components/MovieExports';
 import { EpisodeDownload } from './components/EpisodeDownload';
+import { ChildProfilesPanel } from './components/ChildProfilesPanel';
 import {
   AlertTriangle,
   Aperture,
@@ -219,6 +220,7 @@ function StudioWorkspace({ authUser }: { authUser: AuthUser }) {
   const setView = (next: View) => setLocation(next === 'dashboard' ? '/studio' : `/studio/${next}`);
   const [toast, setToast] = useState<ToastState | null>(null);
   const [showProjectEditor, setShowProjectEditor] = useState(false);
+  const [showChildProfiles, setShowChildProfiles] = useState(false);
   const [showCharacterEditor, setShowCharacterEditor] = useState(false);
   const [editingCharacter, setEditingCharacter] = useState<Character | null>(null);
   const [projectForm, setProjectForm] = useState<ProjectForm>({
@@ -960,12 +962,12 @@ function StudioWorkspace({ authUser }: { authUser: AuthUser }) {
   };
 
   if (bootstrapQuery.isLoading) {
-    return <WorkspaceFrame view={view} setView={navigateToView} authUser={authUser} authChecked={authChecked}><LoadingWorkspace /></WorkspaceFrame>;
+    return <WorkspaceFrame view={view} setView={navigateToView} authUser={authUser} authChecked={authChecked} onManageProfiles={() => setShowChildProfiles(true)}><LoadingWorkspace /></WorkspaceFrame>;
   }
 
   if (bootstrapQuery.isError || !bootstrap) {
     return (
-      <WorkspaceFrame view={view} setView={navigateToView} authUser={authUser} authChecked={authChecked}>
+      <WorkspaceFrame view={view} setView={navigateToView} authUser={authUser} authChecked={authChecked} onManageProfiles={() => setShowChildProfiles(true)}>
         <div className="content-wrap">
           <div className="error-panel" data-testid="panel-bootstrap-error">
             <h2>Studio access unavailable</h2>
@@ -986,7 +988,7 @@ function StudioWorkspace({ authUser }: { authUser: AuthUser }) {
   }
 
   return (
-    <WorkspaceFrame view={view} setView={navigateToView} project={project} authUser={authUser} authChecked={authChecked}>
+    <WorkspaceFrame view={view} setView={navigateToView} project={project} authUser={authUser} authChecked={authChecked} onManageProfiles={() => setShowChildProfiles(true)}>
       {renderView()}
       {view === 'dashboard' && project && <div className="content-wrap"><MovieExports episodes={episodes} accountId={authUser.id} projectId={project.id} /></div>}
       {showProjectEditor ? (
@@ -998,6 +1000,7 @@ function StudioWorkspace({ authUser }: { authUser: AuthUser }) {
           pending={updateProject.isPending}
         />
       ) : null}
+      {showChildProfiles ? <ChildProfilesPanel onClose={() => setShowChildProfiles(false)} /> : null}
       {showCharacterEditor ? (
         <CharacterEditor
           form={characterForm}
@@ -1031,6 +1034,7 @@ function WorkspaceFrame({
   project,
   authUser,
   authChecked,
+  onManageProfiles,
 }: {
   children: ReactNode;
   view: View;
@@ -1038,6 +1042,7 @@ function WorkspaceFrame({
   project?: Project;
   authUser: AuthUser | null;
   authChecked: boolean;
+  onManageProfiles?: () => void;
 }) {
   return (
     <div className="studio-app">
@@ -1086,6 +1091,7 @@ function WorkspaceFrame({
             </div>
             <div className="topbar-actions">
               <span className="status-pill"><span className="signal-dot" /> {project?.seasonLabel ?? 'Workspace ready'}</span>
+              {authUser && onManageProfiles ? <button type="button" className="btn btn-quiet guardian-controls-button" onClick={onManageProfiles} data-testid="button-open-guardian-controls"><UsersRound size={14} /> Guardian controls</button> : null}
               {!authChecked ? null : authUser ? (
                 <LogoutButton testId="link-sign-out" />
               ) : (
