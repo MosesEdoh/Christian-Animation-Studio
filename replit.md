@@ -7,7 +7,7 @@ Private creative workspace for writing, directing, storyboarding, and generating
 - `pnpm --filter @workspace/api-server run dev` — run the API server (port 5000)
 - `pnpm run typecheck` — full typecheck across all packages
 - `pnpm test:movie-schema-setup` — development movie migration regression; uses an isolated temporary PostgreSQL schema to verify repeatability, preserved history, and the queued-worker query
-- `pnpm test:movie-exports` — movie resource-limit, cancellation, deletion, preflight, queue idempotency, and component tests. Idempotency tests require `DATABASE_URL` and use an isolated temporary schema.
+- `pnpm test:movie-exports` — movie resource-limit, cancellation, deletion, preflight, queue idempotency, and component tests. PostgreSQL preflight and idempotency tests require `DATABASE_URL`; fixtures use connection-local temporary tables or an isolated temporary schema and never touch saved studio data.
 - `pnpm test:episode-exports` — episode assembly, ZIP, download helper, and signed-in dashboard component regression tests; requires `ffmpeg` and `ffprobe`, creates temporary media, and mocks provider downloads without querying the database
 - `pnpm test:episode-admission` — shared admission unit and PostgreSQL multi-process/crash-recovery tests; requires `DATABASE_URL` and the current DB schema; uses isolated test pool names
 - `pnpm --filter @workspace/creative-studio run test:components` — dashboard and episode download controls in jsdom; no sign-in, database, or running servers required

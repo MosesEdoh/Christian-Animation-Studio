@@ -6,7 +6,7 @@
     "test:movie-schema-setup": "pnpm --filter @workspace/api-server exec tsx --test test/movieSchemaSetup.test.ts",
     "test:movie-temporary-storage": "pnpm --filter @workspace/api-server exec tsx --test test/movieTemporaryStorage.test.ts",
     "test:episode-admission": "pnpm --filter @workspace/api-server exec tsx --test test/episodeExportAdmission.test.ts",
-    "test:movie-exports": "pnpm --filter @workspace/api-server exec tsx --test test/movieCancellation.test.ts test/movieBudget.test.ts test/movieDeletion.test.ts test/moviePreflight.test.ts test/movieIdempotency.test.ts && pnpm --filter @workspace/creative-studio exec vitest run --config vitest.config.ts MovieCancellation MovieDeletion MovieExports",
+    "test:movie-exports": "pnpm --filter @workspace/api-server exec tsx --test test/movieCancellation.test.ts test/movieBudget.test.ts test/movieDeletion.test.ts test/moviePreflight.test.ts test/moviePreflight.postgres.test.ts test/movieIdempotency.test.ts && pnpm --filter @workspace/creative-studio exec vitest run --config vitest.config.ts MovieCancellation MovieDeletion MovieExports",
     "test:episode-exports": "pnpm --filter @workspace/api-server exec tsx --test test/episodeTemporaryStorage.test.ts test/episodeVideo.test.ts ../../artifacts/creative-studio/test/seriesPackage.test.ts ../../artifacts/creative-studio/test/episodeDownload.test.ts && pnpm --filter @workspace/creative-studio run test:components",
     "preinstall": "sh -c 'rm -f package-lock.json yarn.lock; case \"$npm_config_user_agent\" in pnpm/*) ;; *) echo \"Use pnpm instead\" >&2; exit 1 ;; esac'",
     "build": "pnpm run typecheck && pnpm -r --if-present run build",
