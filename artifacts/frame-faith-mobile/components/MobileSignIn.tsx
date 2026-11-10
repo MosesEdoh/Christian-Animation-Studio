@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { createElement, useState, type FormEvent, type ReactNode } from 'react';
 import { Platform, Pressable, Text, TextInput, View } from 'react-native';
 import { useSignIn, useSignUp, useSSO } from '@clerk/expo';
 import * as AuthSession from 'expo-auth-session';
@@ -8,6 +8,19 @@ import { useColors } from '@/hooks/useColors';
 import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
 
 WebBrowser.maybeCompleteAuthSession();
+
+function AuthForm({ children, onSubmit }: { children: ReactNode; onSubmit: () => void }) {
+  if (Platform.OS === 'web') {
+    return createElement('form', {
+      onSubmit: (event: FormEvent<HTMLFormElement>) => {
+        event.preventDefault();
+        onSubmit();
+      },
+      style: { display: 'flex', flexDirection: 'column', gap: 18, width: '100%' },
+    }, children);
+  }
+  return <View style={{ gap: 18 }}>{children}</View>;
+}
 
 export function MobileSignIn() {
   const { signIn, errors: signInErrors, fetchStatus: signInStatus } = useSignIn();
@@ -74,15 +87,17 @@ export function MobileSignIn() {
     <Text style={{ color: colors.teal, fontFamily: 'Manrope_700Bold' }}>FRAME & FAITH</Text>
     <Text style={{ fontSize: 30, fontFamily: 'Fraunces_600SemiBold', color: colors.foreground }}>{verification ? 'Verify your email' : register ? 'Create an account' : 'Your private studio'}</Text>
     <Text style={{ color: colors.mutedForeground }}>Use any verified email, then trust each device before opening the shared studio.</Text>
-    {verification ? <TextInput testID="mobile-code" accessibilityLabel="Verification code" style={inputStyle} value={code} onChangeText={setCode} keyboardType="number-pad" placeholder="Verification code" placeholderTextColor={colors.mutedForeground} /> : <>
-      <TextInput testID="mobile-email" accessibilityLabel="Email" style={inputStyle} value={emailAddress} onChangeText={setEmailAddress} autoCapitalize="none" autoComplete="email" keyboardType="email-address" placeholder="Email" placeholderTextColor={colors.mutedForeground} />
-      <TextInput testID="mobile-password" accessibilityLabel="Password" style={inputStyle} value={password} onChangeText={setPassword} secureTextEntry placeholder="Password" placeholderTextColor={colors.mutedForeground} />
-    </>}
-    {!!error && <Text accessibilityRole="alert" style={{ color: colors.destructive }}>{error}</Text>}
-    {Object.values(errors.fields).map((field, index) => field?.message ? <Text key={index} style={{ color: colors.destructive }}>{field.message}</Text> : null)}
-    <Pressable testID="mobile-login" disabled={pending} onPress={submit} style={{ backgroundColor: colors.primary, borderRadius: 14, padding: 17 }}>
-      <Text style={{ textAlign: 'center', color: colors.primaryForeground }}>{pending ? 'Please wait…' : verification ? 'Verify' : register ? 'Create account' : 'Sign in'}</Text>
-    </Pressable>
+    <AuthForm onSubmit={() => void submit()}>
+      {verification ? <TextInput testID="mobile-code" accessibilityLabel="Verification code" style={inputStyle} value={code} onChangeText={setCode} keyboardType="number-pad" returnKeyType="done" onSubmitEditing={() => void submit()} placeholder="Verification code" placeholderTextColor={colors.mutedForeground} /> : <>
+        <TextInput testID="mobile-email" accessibilityLabel="Email" style={inputStyle} value={emailAddress} onChangeText={setEmailAddress} autoCapitalize="none" autoComplete="email" keyboardType="email-address" returnKeyType="next" placeholder="Email" placeholderTextColor={colors.mutedForeground} />
+        <TextInput testID="mobile-password" accessibilityLabel="Password" style={inputStyle} value={password} onChangeText={setPassword} secureTextEntry returnKeyType="done" onSubmitEditing={() => void submit()} placeholder="Password" placeholderTextColor={colors.mutedForeground} />
+      </>}
+      {!!error && <Text accessibilityRole="alert" style={{ color: colors.destructive }}>{error}</Text>}
+      {Object.values(errors.fields).map((field, index) => field?.message ? <Text key={index} style={{ color: colors.destructive }}>{field.message}</Text> : null)}
+      <Pressable testID="mobile-login" disabled={pending} onPress={submit} style={{ backgroundColor: colors.primary, borderRadius: 14, padding: 17 }}>
+        <Text style={{ textAlign: 'center', color: colors.primaryForeground }}>{pending ? 'Please wait…' : verification ? 'Verify' : register ? 'Create account' : 'Sign in'}</Text>
+      </Pressable>
+    </AuthForm>
     {!verification && <Pressable testID="mobile-google" disabled={pending} onPress={google} style={{ backgroundColor: colors.secondary, padding: 17, borderRadius: 14 }}><Text style={{ color: colors.foreground, textAlign: 'center' }}>Continue with Google</Text></Pressable>}
     <Pressable disabled={pending} onPress={() => { setRegister(!register); setVerification(false); setCode(''); setError(''); void signIn.reset(); void signUp.reset(); }}><Text style={{ color: colors.teal }}>{verification ? 'Start over' : register ? 'Already have an account? Sign in' : 'Create an account'}</Text></Pressable>
     <View nativeID="clerk-captcha" />
