@@ -58,6 +58,7 @@ import {
   studioTrustedDevicesTable,
 } from "@workspace/db";
 import { generateGeminiJson, generateGeminiText } from "../lib/ai";
+import { generateCharacterDialogueAudio } from "../lib/characterDialogue";
 import {
   submitVideoGeneration,
   VideoGenerationProviderError,
@@ -955,6 +956,7 @@ router.get("/studio/episodes/:id/video", async (req, res): Promise<void> => {
   res.once("close", onClose);
   if (req.aborted || res.destroyed) abort();
   let directory: string | undefined;
+  let dialogueGenerationFailed = false;
   try {
     const [episode] = await db
       .select()
@@ -965,9 +967,44 @@ router.get("/studio/episodes/:id/video", async (req, res): Promise<void> => {
       res.status(404).json({ error: "Episode not found" });
       return;
     }
-    const clips = await episodeVideoClipsQuery(episodeId);
+    const clipRows = await episodeVideoClipsQuery(episodeId);
     controller.signal.throwIfAborted();
-    const assembled = await assembleEpisodeVideo(clips.map(({ clip }) => clip), undefined, controller.signal);
+    const scenes = await db
+      .select({ id: studioScenesTable.id, content: studioScenesTable.content })
+      .from(studioScenesTable)
+      .where(eq(studioScenesTable.episodeId, episodeId))
+      .orderBy(asc(studioScenesTable.number));
+    const characters = await db
+      .select({
+        id: studioCharactersTable.id,
+        name: studioCharactersTable.name,
+        personality: studioCharactersTable.personality,
+        role: studioCharactersTable.role,
+      })
+      .from(studioCharactersTable)
+      .where(eq(studioCharactersTable.projectId, episode.projectId))
+      .orderBy(asc(studioCharactersTable.id));
+    controller.signal.throwIfAborted();
+
+    const scenesById = new Map(scenes.map(scene => [scene.id, scene]));
+    const clips = clipRows.map(({ clip, sceneId }) => ({ ...clip, sceneId }));
+    const assembled = await assembleEpisodeVideo(clips, undefined, controller.signal, async (sceneIds, signal) => {
+      const dialogueByScene = new Map<number, Buffer>();
+      for (const sceneId of sceneIds) {
+        signal.throwIfAborted();
+        const scene = scenesById.get(sceneId);
+        if (!scene) continue;
+        try {
+          const audio = await generateCharacterDialogueAudio(scene.content, characters, signal);
+          if (audio) dialogueByScene.set(sceneId, audio);
+        } catch (error) {
+          dialogueGenerationFailed = true;
+          req.log.error({ err: error, episodeId, sceneId }, "Character dialogue voice generation failed");
+          throw error;
+        }
+      }
+      return dialogueByScene;
+    });
     directory = assembled.directory;
     assembled.signal.throwIfAborted();
     res.setHeader("Content-Type", "video/mp4");
@@ -978,6 +1015,12 @@ router.get("/studio/episodes/:id/video", async (req, res): Promise<void> => {
     await pipeline(createReadStream(assembled.outputPath), res, { signal: assembled.signal });
   } catch (error) {
     if (controller.signal.aborted || res.destroyed) return;
+    if (dialogueGenerationFailed) {
+      res.status(502).json({
+        error: "Character voices could not be prepared, so no silent episode file was created. Try again later.",
+      });
+      return;
+    }
     const message = error instanceof Error ? error.message : "Episode video assembly failed.";
     if (error instanceof EpisodeVideoBusyError) {
       req.log.info({

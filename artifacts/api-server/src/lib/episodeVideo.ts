@@ -63,7 +63,14 @@ export type EpisodeVideoClip = {
   provider: string;
   status: string;
   url: string | null;
+  sceneId?: number;
+  dialogueAudio?: Buffer;
 };
+
+export type PrepareDialogueAudio = (
+  sceneIds: number[],
+  signal: AbortSignal,
+) => Promise<Map<number, Buffer>>;
 
 export type EpisodeVideoIssue = {
   clipId: number;
@@ -74,6 +81,7 @@ export type EpisodeVideoIssue = {
 export type EpisodeVideoReport = {
   usedClipIds: number[];
   skippedClips: EpisodeVideoIssue[];
+  voicedSceneIds?: number[];
 };
 
 export type AssembledEpisodeVideo = {
@@ -277,10 +285,55 @@ async function normalizeClip(directory: string, inputPath: string, outputPath: s
   await runMediaTool(directory, "ffmpeg", args, signal);
 }
 
+async function concatenateVideoFiles(
+  directory: string,
+  inputPaths: string[],
+  outputPath: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const concatPath = join(directory, `${outputPath.split("/").at(-1)}.txt`);
+  await writeFile(concatPath, inputPaths.map(path => `file '${path}'`).join("\n"));
+  await runMediaTool(directory, "ffmpeg", [
+    "-hide_banner", "-loglevel", "error", "-y",
+    "-f", "concat", "-safe", "0", "-i", concatPath,
+    "-c", "copy", "-movflags", "+faststart", outputPath,
+  ], signal);
+}
+
+async function mixDialogueTrack(
+  directory: string,
+  inputVideoPath: string,
+  dialogueAudio: Buffer,
+  outputPath: string,
+  signal?: AbortSignal,
+): Promise<void> {
+  const durationText = await runMediaTool(directory, "ffprobe", [
+    "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1",
+    inputVideoPath,
+  ], signal);
+  const duration = Number(durationText);
+  if (!Number.isFinite(duration) || duration <= 0) {
+    throw new Error("The assembled scene duration could not be measured for character dialogue.");
+  }
+  const audioPath = join(directory, `${outputPath.split("/").at(-1)}.wav`);
+  await writeFile(audioPath, dialogueAudio, { flag: "wx" });
+  await runMediaTool(directory, "ffmpeg", [
+    "-hide_banner", "-loglevel", "error", "-y",
+    "-i", inputVideoPath,
+    "-i", audioPath,
+    "-filter_complex",
+    `[0:a]volume=0.25[bed];[1:a]apad,atrim=duration=${duration}[voice];[bed][voice]amix=inputs=2:duration=first:normalize=0[a]`,
+    "-map", "0:v:0", "-map", "[a]",
+    "-c:v", "copy", "-c:a", "aac", "-b:a", "128k", "-ar", "44100", "-ac", "2",
+    "-movflags", "+faststart", outputPath,
+  ], signal);
+}
+
 export async function assembleEpisodeVideo(
   clips: EpisodeVideoClip[],
   limits: EpisodeVideoLimits = DEFAULT_LIMITS,
   signal?: AbortSignal,
+  prepareDialogueAudio?: PrepareDialogueAudio,
 ): Promise<AssembledEpisodeVideo> {
   signal?.throwIfAborted();
   // Acquire globally before creating files or contacting providers. No local fallback.
@@ -295,13 +348,36 @@ export async function assembleEpisodeVideo(
   signal = AbortSignal.any([lifetime.signal, lease.signal, ...(signal ? [signal] : [])]);
   let directory: string | undefined;
   const report: EpisodeVideoReport = { usedClipIds: [], skippedClips: [] };
-  const normalizedFiles: string[] = [];
+  const normalizedFiles: Array<{ path: string; clip: EpisodeVideoClip }> = [];
   let sourceBytes = 0;
   try {
     lease.assertOwned();
     signal.throwIfAborted();
     directory = await temporaryStorage.create(lease.owner, expiresAt);
     signal?.throwIfAborted();
+    if (prepareDialogueAudio) {
+      const sceneIds = [...new Set(clips
+        .filter(clip => clip.status === "ready" && clip.url && clip.sceneId !== undefined)
+        .map(clip => clip.sceneId!))];
+      if (sceneIds.length) {
+        const dialogueByScene = await prepareDialogueAudio(sceneIds, signal);
+        if (dialogueByScene.size) {
+          report.voicedSceneIds = [...dialogueByScene.keys()].sort((left, right) => left - right);
+        }
+        const attachedScenes = new Set<number>();
+        clips = clips.map(clip => {
+          if (
+            clip.status !== "ready" ||
+            !clip.url ||
+            clip.sceneId === undefined ||
+            attachedScenes.has(clip.sceneId)
+          ) return clip;
+          attachedScenes.add(clip.sceneId);
+          const dialogueAudio = dialogueByScene.get(clip.sceneId);
+          return dialogueAudio ? { ...clip, dialogueAudio } : clip;
+        });
+      }
+    }
     for (const clip of clips) {
       lease.assertOwned();
       signal?.throwIfAborted();
@@ -336,7 +412,7 @@ export async function assembleEpisodeVideo(
       try {
         sourceBytes += await fetchClip(clip.url, sourcePath, Math.min(limits.clipBytes, limits.sourceBytes - sourceBytes), signal);
         await normalizeClip(directory, sourcePath, normalizedPath, signal);
-        normalizedFiles.push(normalizedPath);
+        normalizedFiles.push({ path: normalizedPath, clip });
         report.usedClipIds.push(clip.id);
       } catch (error) {
         signal?.throwIfAborted();
@@ -362,15 +438,39 @@ export async function assembleEpisodeVideo(
       throw new EpisodeVideoUnavailableError(report);
     }
 
-    const concatList = normalizedFiles.map(path => `file '${path}'`).join("\n");
-    const concatPath = join(directory, "clips.txt");
+    const scenes = new Map<string, { files: string[]; dialogueAudio?: Buffer }>();
+    for (const item of normalizedFiles) {
+      const key = item.clip.sceneId === undefined ? `clip:${item.clip.id}` : `scene:${item.clip.sceneId}`;
+      let scene = scenes.get(key);
+      if (!scene) {
+        scene = { files: [] };
+        scenes.set(key, scene);
+      }
+      scene.files.push(item.path);
+      if (item.clip.dialogueAudio) scene.dialogueAudio = item.clip.dialogueAudio;
+    }
+    const sceneFiles: string[] = [];
+    let sceneIndex = 0;
+    for (const scene of scenes.values()) {
+      const index = sceneIndex;
+      sceneIndex += 1;
+      signal?.throwIfAborted();
+      const scenePath = scene.files.length === 1
+        ? scene.files[0]!
+        : join(directory, `scene-${String(index).padStart(6, "0")}.mp4`);
+      if (scene.files.length > 1) {
+        await concatenateVideoFiles(directory, scene.files, scenePath, signal);
+      }
+      if (!scene.dialogueAudio) {
+        sceneFiles.push(scenePath);
+        continue;
+      }
+      const voicedScenePath = join(directory, `voiced-scene-${String(index).padStart(6, "0")}.mp4`);
+      await mixDialogueTrack(directory, scenePath, scene.dialogueAudio, voicedScenePath, signal);
+      sceneFiles.push(voicedScenePath);
+    }
     const outputPath = join(directory, "episode.mp4");
-    await writeFile(concatPath, concatList);
-    await runMediaTool(directory, "ffmpeg", [
-      "-hide_banner", "-loglevel", "error", "-y",
-      "-f", "concat", "-safe", "0", "-i", concatPath,
-      "-c", "copy", "-movflags", "+faststart", outputPath,
-    ], signal);
+    await concatenateVideoFiles(directory, sceneFiles, outputPath, signal);
     signal?.throwIfAborted();
     // Retain capacity while the caller streams the MP4 and until cleanup completes.
     lease.assertOwned();

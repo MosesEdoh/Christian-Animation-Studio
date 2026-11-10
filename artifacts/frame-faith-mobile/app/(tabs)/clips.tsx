@@ -4,6 +4,7 @@ import { getGetStudioBootstrapQueryKey, useGetStudioBootstrap, getListStudioExpo
 import { useQueryClient } from '@tanstack/react-query';
 import { useColors } from '@/hooks/useColors';
 import { PrivateVideo } from '@/components/PrivateVideo';
+import { VoicedEpisodePreview } from '@/components/VoicedEpisodePreview';
 import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
 import { useMovieExportHistory } from '@/hooks/useMovieExportHistory';
 
@@ -30,6 +31,10 @@ export default function ClipsScreen() {
   const activeShot = query.data?.shots.find(shot => shot.id === selectedShot) ?? query.data?.shots[0];
   const readyClips = (query.data?.clips ?? []).filter(clip => clip.status === 'ready' && clip.url);
   const activeClip = readyClips.find(clip => clip.id === selectedClip);
+  const selectedEpisode = query.data?.episodes.find(episode => episode.id === episodeId);
+  const episodeSceneIds = new Set(query.data?.scenes.filter(scene => scene.episodeId === episodeId).map(scene => scene.id) ?? []);
+  const episodeShotIds = new Set(query.data?.shots.filter(shot => episodeSceneIds.has(shot.sceneId)).map(shot => shot.id) ?? []);
+  const hasReadyEpisodeClips = readyClips.some(clip => episodeShotIds.has(clip.shotId));
   useEffect(() => {
     if (activeShot) {
       setClipPrompt(activeShot.description);
@@ -139,6 +144,7 @@ export default function ClipsScreen() {
     {!!error && <Text accessibilityRole="alert" style={{ color: colors.destructive }}>{error}</Text>}
     <Pressable style={button} onPress={() => setEpisodeId(null)}><Text style={{ color: colors.foreground }}>{episodeId === null ? '✓ ' : ''}Entire series · one MP4</Text></Pressable>
     {query.data.episodes.map(episode => <Pressable key={episode.id} style={button} onPress={() => setEpisodeId(episode.id)}><Text style={{ color: colors.foreground }}>{episodeId === episode.id ? '✓ ' : ''}Episode {episode.number}: {episode.title}</Text></Pressable>)}
+    {selectedEpisode ? <VoicedEpisodePreview episodeId={selectedEpisode.id} episodeTitle={`${selectedEpisode.number}: ${selectedEpisode.title}`} hasClips={hasReadyEpisodeClips} /> : null}
     <Pressable disabled={create.isPending} style={{ ...button, backgroundColor: colors.primary }} onPress={queue}><Text style={{ color: colors.primaryForeground, fontWeight: '700' }}>{create.isPending ? 'Queuing…' : 'Build MP4 · both orientations & resolutions'}</Text></Pressable>
     <Text style={{ color: colors.foreground, fontSize: 22, fontFamily: 'Fraunces_600SemiBold' }}>Saved movies</Text>
     <Pressable testID="mobile-refresh-movies" accessibilityRole="button" accessibilityState={{ disabled: exports.isFetching }} disabled={exports.isFetching} style={button} onPress={() => { if (!exports.isFetching) void exports.refetch(); }}><Text style={{ color: colors.foreground }}>{exports.isRefetching ? 'Refreshing movies…' : 'Refresh movies'}</Text></Pressable>

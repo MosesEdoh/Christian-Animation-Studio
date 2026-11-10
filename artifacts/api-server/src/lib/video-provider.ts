@@ -282,9 +282,6 @@ export async function generateGoogleOmniVideoBytes(
         duration: `${durationSeconds}s`,
         delivery: "uri",
       },
-      background: false,
-      store: false,
-      stream: false,
     }),
     signal,
   });

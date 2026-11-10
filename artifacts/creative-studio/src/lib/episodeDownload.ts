@@ -114,3 +114,41 @@ export async function downloadEpisodeVideo(
     };
   }
 }
+
+export async function previewEpisodeVideo(
+  episode: { id: number },
+  signal?: AbortSignal,
+): Promise<{ url: string; skippedClips: EpisodeVideoIssue[] }> {
+  signal?.throwIfAborted();
+  const response = await customFetch<Response>(`/api/studio/episodes/${episode.id}/video`, {
+    responseType: 'response',
+    credentials: 'include',
+    signal,
+  });
+  if (!response.ok) {
+    const failure = await response.json().catch(() => ({}));
+    signal?.throwIfAborted();
+    throw new Error(response.status === 401
+      ? 'Sign in again to prepare this episode.'
+      : typeof failure.error === 'string'
+        ? failure.error
+        : `The episode MP4 could not be prepared (${response.status}). Try again.`);
+  }
+  if (!response.headers.get('content-type')?.toLowerCase().includes('video/mp4')) {
+    throw new Error('The episode service did not return an MP4. Try again.');
+  }
+  const blob = await response.blob();
+  signal?.throwIfAborted();
+  if (!blob.size) throw new Error('The episode export returned an empty video. Try again.');
+  let skippedClips: EpisodeVideoIssue[] = [];
+  try {
+    const encoded = response.headers.get('x-episode-video-report');
+    if (!encoded) throw new Error('Missing clip report');
+    const bytes = Uint8Array.from(atob(encoded), character => character.charCodeAt(0));
+    const report = JSON.parse(new TextDecoder().decode(bytes));
+    skippedClips = readIssues(report.skippedClips);
+  } catch {
+    skippedClips = [];
+  }
+  return { url: URL.createObjectURL(blob), skippedClips };
+}

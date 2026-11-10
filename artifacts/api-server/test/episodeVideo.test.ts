@@ -23,6 +23,7 @@ import {
 
 let fixtures: string;
 const media: Buffer[] = [];
+let dialogueAudio: Buffer;
 // Capture before earlier tests layer provider mocks onto the global transport.
 const nativeHttpFetch = globalThis.fetch;
 const clip = (id: number, overrides: Partial<EpisodeVideoClip> = {}): EpisodeVideoClip => ({
@@ -62,6 +63,12 @@ before(async () => {
     mediaTool("ffmpeg", [...args, path]);
     media.push(await readFile(path));
   }
+  const dialoguePath = join(fixtures, "dialogue.wav");
+  mediaTool("ffmpeg", [
+    "-v", "error", "-y", "-f", "lavfi", "-i", "sine=frequency=880:sample_rate=24000:duration=1.4",
+    "-c:a", "pcm_s16le", "-ac", "1", dialoguePath,
+  ]);
+  dialogueAudio = await readFile(dialoguePath);
 });
 afterEach(() => mock.restoreAll());
 after(async () => { if (fixtures) await rm(fixtures, { recursive: true, force: true }); });
@@ -112,6 +119,35 @@ test("real clips retain input order and normalize mixed audio, dimensions, and f
     const rms = Math.sqrt(energy / (samples.length / 2));
     assert.ok(channel === 2 ? rms < 20 : rms > 500, `unexpected audio at ${time}s: ${rms}`);
   }
+  mediaTool("ffmpeg", ["-v", "error", "-xerror", "-i", result.outputPath, "-f", "null", "-"]);
+});
+
+test("episode assembly carries a scene voice track across its shots and keeps the file playable", async (t) => {
+  mock.method(globalThis, "fetch", async () => videoResponse(media[1]));
+  let preparedScenes: number[] = [];
+  const result = await assembleEpisodeVideo([
+    clip(301, { sceneId: 44 }),
+    clip(302, { sceneId: 44 }),
+  ], undefined, undefined, async sceneIds => {
+    preparedScenes = sceneIds;
+    return new Map([[44, dialogueAudio]]);
+  });
+  t.after(() => removeEpisodeVideo(result.directory));
+  assert.deepEqual(preparedScenes, [44]);
+  assert.deepEqual(result.report, { usedClipIds: [301, 302], skippedClips: [], voicedSceneIds: [44] });
+  const probe = JSON.parse(mediaTool("ffprobe", [
+    "-v", "error", "-show_streams", "-show_format", "-of", "json", result.outputPath,
+  ]).toString());
+  assert.ok(probe.streams.some((stream: { codec_type: string; codec_name: string }) =>
+    stream.codec_type === "audio" && stream.codec_name === "aac"));
+  assert.ok(Number(probe.format.duration) >= 1.5 && Number(probe.format.duration) < 1.9);
+  const spokenSamples = mediaTool("ffmpeg", [
+    "-v", "error", "-ss", "1.05", "-i", result.outputPath,
+    "-t", "0.2", "-vn", "-f", "s16le", "-ac", "1", "pipe:1",
+  ]);
+  let energy = 0;
+  for (let offset = 0; offset < spokenSamples.length; offset += 2) energy += spokenSamples.readInt16LE(offset) ** 2;
+  assert.ok(Math.sqrt(energy / (spokenSamples.length / 2)) > 500, "scene dialogue should remain audible beyond the first shot");
   mediaTool("ffmpeg", ["-v", "error", "-xerror", "-i", result.outputPath, "-f", "null", "-"]);
 });
 

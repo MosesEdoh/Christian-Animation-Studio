@@ -14,3 +14,9 @@ Use the API version specified by the video guide rather than assuming the genera
 **Why:** The stable `/v1/interactions` endpoint returned misleading model-not-found errors for Omni models that were listed by the same key. `/v1beta/interactions`, referenced in the video guide, recognized the model and reached its quota check.
 
 **How to apply:** Verify both the model-specific endpoint version and usable generation quota before claiming a provider is live-tested. Model listing alone proves neither.
+
+Keep the video Interactions request to the documented `model`, `input`, and `response_format` fields. Extra top-level `background`, `store`, and `stream` flags caused a 400 response, while the documented request produced a decodable MP4.
+
+**Why:** The provider accepted a minimal live request and returned a playable H.264/AAC sample; the app's additional undocumented flags were rejected.
+
+**How to apply:** Do not add generic Interactions options to video requests without checking the current video guide; verify real output with `ffprobe`.
