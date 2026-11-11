@@ -76,6 +76,7 @@ import {
   type AuthUser,
 } from '@workspace/api-client-react';
 import { ErrorBoundary } from '@/components/error-boundary';
+import { AuthErrorFallback } from '@/components/AuthErrorFallback';
 import { Toaster } from '@/components/ui/toaster';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import NotFound from '@/pages/not-found';
@@ -122,7 +123,7 @@ function AppRouter() {
 
 function RoutedErrorBoundary({ children }: { children: ReactNode }) {
   const [location] = useLocation();
-  return <ErrorBoundary resetKey={location}>{children}</ErrorBoundary>;
+  return <ErrorBoundary resetKey={location} FallbackComponent={AuthErrorFallback}>{children}</ErrorBoundary>;
 }
 
 function Home() {
