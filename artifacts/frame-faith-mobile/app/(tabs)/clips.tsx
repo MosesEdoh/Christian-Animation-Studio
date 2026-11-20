@@ -7,6 +7,7 @@ import { useColors } from '@/hooks/useColors';
 import { PrivateVideo } from '@/components/PrivateVideo';
 import { VoicedEpisodePreview } from '@/components/VoicedEpisodePreview';
 import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
+import { Badge, Button, Card, Chip, EmptyState, FieldLabel, Notice, ProgressBar, ScreenHeader, SectionHeader, StateScreen, fonts } from '@/components/ui';
 import { useMovieExportHistory } from '@/hooks/useMovieExportHistory';
 
 export default function ClipsScreen() {
@@ -31,7 +32,6 @@ export default function ClipsScreen() {
   const exports = useMovieExportHistory();
   const create = useCreateStudioExport();
   const generateClip = useGenerateShotClip();
-  const button = { backgroundColor: colors.secondary, borderRadius: 12, padding: 13, marginBottom: 8 };
   const readyMovies = exports.jobs.filter(job => job.status === 'ready' && job.url);
   const movie = readyMovies.find(job => job.id === selected) ?? readyMovies[0];
   const activeShot = query.data?.shots.find(shot => shot.id === selectedShot) ?? query.data?.shots[0];
@@ -98,29 +98,45 @@ export default function ClipsScreen() {
       void cache.invalidateQueries({ queryKey: getListStudioExportsQueryKey() });
     }
   }
-  if (query.isLoading) return <ActivityIndicator color={colors.primary} />;
-  if (query.isError || !query.data) return <View><Text style={{ color: colors.foreground }}>Studio unavailable.</Text><Pressable onPress={() => query.refetch()}><Text>Retry</Text></Pressable></View>;
-  return <KeyboardAwareScrollViewCompat contentContainerStyle={{ padding: 20, paddingBottom: 115, gap: 16, backgroundColor: colors.background }}>
-    <Text style={{ color: colors.coral, fontWeight: '700', fontSize: 11 }}>ANIMATION DESK</Text>
-    <Text style={{ color: colors.foreground, fontFamily: 'Fraunces_600SemiBold', fontSize: 29 }}>Watch & download</Text>
-    <Text style={{ color: colors.mutedForeground, lineHeight: 21 }}>Storyboard movies are silent review films with your complete scripts and references—not finished animation.</Text>
-    <View style={{ padding: 16, gap: 12, borderRadius: 18, backgroundColor: colors.card }}>
-      <Text style={{ color: colors.foreground, fontSize: 20, fontFamily: 'Fraunces_600SemiBold' }}>Generate a video clip</Text>
-      <Text style={{ color: colors.mutedForeground, lineHeight: 20 }}>Google Gemini Omni creates a playable MP4. Each generation uses the studio’s Google API quota.</Text>
-      <Text style={{ color: colors.foreground, fontWeight: '700' }}>Choose a storyboard shot</Text>
-      <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-        {query.data.shots.map(shot => <Pressable
-          key={shot.id}
-          testID={`mobile-select-shot-${shot.id}`}
-          accessibilityRole="button"
-          accessibilityState={{ selected: activeShot?.id === shot.id }}
-          onPress={() => setSelectedShot(shot.id)}
-          style={{ ...button, marginBottom: 0, padding: 10, backgroundColor: activeShot?.id === shot.id ? colors.primary : colors.secondary }}
-        >
-          <Text style={{ color: activeShot?.id === shot.id ? colors.primaryForeground : colors.foreground }}>Shot {shot.number} · {shot.description}</Text>
-        </Pressable>)}
-      </View>
-      <Text style={{ color: colors.foreground, fontWeight: '700' }}>Motion prompt</Text>
+  if (query.isLoading) return <StateScreen loading message="Loading the animation desk…" />;
+  if (query.isError || !query.data) {
+    return (
+      <StateScreen title="Studio unavailable" message="We couldn’t load your shots and clips. Check your connection and try again.">
+        <Button label="Retry" onPress={() => void query.refetch()} />
+      </StateScreen>
+    );
+  }
+  const episodeLabel = (id: number | null) => {
+    if (id === null) return 'Series';
+    const episode = query.data?.episodes.find(item => item.id === id);
+    return episode ? `Episode ${episode.number}` : 'Episode';
+  };
+  const statusTone = (status: string) => status === 'ready' ? 'success' : status === 'failed' ? 'danger' : 'warning';
+  return <KeyboardAwareScrollViewCompat screen>
+    <ScreenHeader
+      kicker="ANIMATION DESK"
+      title="Watch & download"
+      subtitle="Generate clips from storyboard shots, then build silent storyboard movies for review. Storyboard movies show your scripts and references—they’re not finished animation."
+    />
+
+    <Card>
+      <SectionTitle step="1" title="Generate a video clip" caption="Google Gemini Omni creates a playable MP4. Each generation uses the studio’s Google API quota." />
+      <FieldLabel hint={activeShot ? `Shot ${activeShot.number}: ${activeShot.description}` : undefined}>Choose a storyboard shot</FieldLabel>
+      {query.data.shots.length === 0 ? (
+        <EmptyState title="No storyboard shots yet" body="Add shots in the web studio's storyboard, then generate clips here." />
+      ) : (
+        <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
+          {query.data.shots.map(shot => <Chip
+            key={shot.id}
+            testID={`mobile-select-shot-${shot.id}`}
+            label={`Shot ${shot.number}`}
+            accessibilityLabel={`Shot ${shot.number} · ${shot.description}`}
+            selected={activeShot?.id === shot.id}
+            onPress={() => setSelectedShot(shot.id)}
+          />)}
+        </View>
+      )}
+      <FieldLabel hint="Describe the movement, texture, and feeling.">Motion prompt</FieldLabel>
       <TextInput
         testID="mobile-video-prompt"
         accessibilityLabel="Motion prompt"
@@ -130,19 +146,19 @@ export default function ClipsScreen() {
         placeholder="Describe the movement, texture, and feeling."
         placeholderTextColor={colors.mutedForeground}
         textAlignVertical="top"
-        style={{ color: colors.foreground, backgroundColor: colors.background, borderColor: colors.border, borderWidth: 1, borderRadius: 12, padding: 12, minHeight: 96 }}
+        style={{ color: colors.foreground, backgroundColor: colors.background, borderColor: colors.border, borderWidth: 1, borderRadius: 12, padding: 12, minHeight: 96, fontFamily: fonts.regular, fontSize: 15, lineHeight: 22 }}
       />
-      <Text style={{ color: colors.foreground, fontWeight: '700' }}>Orientation</Text>
+      <FieldLabel>Orientation</FieldLabel>
       <View style={{ flexDirection: 'row', gap: 8 }}>
-        {(['16:9', '9:16'] as const).map(value => <Pressable key={value} testID={`mobile-aspect-${value}`} accessibilityRole="button" accessibilityState={{ selected: aspectRatio === value }} onPress={() => setAspectRatio(value)} style={{ ...button, flex: 1, marginBottom: 0, backgroundColor: aspectRatio === value ? colors.primary : colors.secondary }}><Text style={{ color: aspectRatio === value ? colors.primaryForeground : colors.foreground, textAlign: 'center' }}>{value === '16:9' ? 'Landscape' : 'Portrait'} · {value}</Text></Pressable>)}
+        {(['16:9', '9:16'] as const).map(value => <Chip key={value} grow testID={`mobile-aspect-${value}`} selected={aspectRatio === value} onPress={() => setAspectRatio(value)} label={`${value === '16:9' ? 'Landscape' : 'Portrait'} · ${value}`} />)}
       </View>
-      <Text style={{ color: colors.foreground, fontWeight: '700' }}>Resolution</Text>
+      <FieldLabel>Resolution</FieldLabel>
       <View style={{ flexDirection: 'row', gap: 8 }}>
-        {(['720p', '1080p'] as const).map(value => <Pressable key={value} testID={`mobile-resolution-${value}`} accessibilityRole="button" accessibilityState={{ selected: resolution === value }} onPress={() => setResolution(value)} style={{ ...button, flex: 1, marginBottom: 0, backgroundColor: resolution === value ? colors.primary : colors.secondary }}><Text style={{ color: resolution === value ? colors.primaryForeground : colors.foreground, textAlign: 'center' }}>{value}</Text></Pressable>)}
+        {(['720p', '1080p'] as const).map(value => <Chip key={value} grow testID={`mobile-resolution-${value}`} selected={resolution === value} onPress={() => setResolution(value)} label={value} />)}
       </View>
-      <Text style={{ color: colors.foreground, fontWeight: '700' }}>Clip length</Text>
+      <FieldLabel>Clip length</FieldLabel>
       <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 8 }}>
-        {[3, 5, 8, 10, 15].map(value => <Pressable key={value} testID={`mobile-duration-${value}`} accessibilityRole="button" accessibilityState={{ selected: durationSeconds === value }} onPress={() => setDurationSeconds(value)} style={{ ...button, marginBottom: 0, backgroundColor: durationSeconds === value ? colors.primary : colors.secondary }}><Text style={{ color: durationSeconds === value ? colors.primaryForeground : colors.foreground }}>{value} sec</Text></Pressable>)}
+        {[3, 5, 8, 10, 15].map(value => <Chip key={value} testID={`mobile-duration-${value}`} selected={durationSeconds === value} onPress={() => setDurationSeconds(value)} label={`${value} sec`} />)}
       </View>
       {activeShot?.referenceImageUrl ? <View style={{ gap: 8 }}>
         <Pressable
@@ -152,45 +168,108 @@ export default function ClipsScreen() {
           onPress={() => setUseReference(value => !value)}
           style={{ flexDirection: 'row', gap: 10, alignItems: 'flex-start', paddingVertical: 4 }}
         >
-          <Text style={{ color: colors.primary, fontSize: 18 }}>{useReference ? '☑' : '☐'}</Text>
-          <Text style={{ color: colors.foreground, flex: 1 }}>Use saved reference. I have permission to send it to Google, and it does not depict a child or minor.</Text>
+          <View style={{ width: 22, height: 22, borderWidth: 1, borderRadius: 6, marginTop: 1, alignItems: 'center', justifyContent: 'center', borderColor: useReference ? colors.teal : colors.border, backgroundColor: useReference ? colors.teal : 'transparent' }}>
+            {useReference ? <Text style={{ color: colors.card, fontFamily: fonts.bold }}>✓</Text> : null}
+          </View>
+          <Text style={{ color: colors.foreground, flex: 1, fontFamily: fonts.regular, lineHeight: 20 }}>Use saved reference. I have permission to send it to Google, and it does not depict a child or minor.</Text>
         </Pressable>
-        <Text style={{ color: colors.mutedForeground, lineHeight: 18 }}>Google restricts reference images depicting minors in the EEA, UK, and Switzerland. Leave this off to generate from text only.</Text>
+        <Text style={{ color: colors.mutedForeground, lineHeight: 18, fontFamily: fonts.regular, fontSize: 12 }}>Google restricts reference images depicting minors in the EEA, UK, and Switzerland. Leave this off to generate from text only.</Text>
       </View> : null}
-      <Pressable
+      <Button
         testID="mobile-generate-video"
-        accessibilityRole="button"
         onPress={generate}
-        disabled={!activeShot || generateClip.isPending}
-        style={{ ...button, backgroundColor: colors.primary, opacity: generateClip.isPending ? 0.7 : 1 }}
-      >
-        {generateClip.isPending ? <ActivityIndicator color={colors.primaryForeground} /> : <Text style={{ color: colors.primaryForeground, fontWeight: '700', textAlign: 'center' }}>Generate video clip</Text>}
-      </Pressable>
-    </View>
-    {!!error && <Text accessibilityRole="alert" style={{ color: colors.destructive }}>{error}</Text>}
-    <Pressable style={button} onPress={() => setEpisodeId(null)}><Text style={{ color: colors.foreground }}>{episodeId === null ? '✓ ' : ''}Entire series · one MP4</Text></Pressable>
-    {query.data.episodes.map(episode => <Pressable key={episode.id} style={button} onPress={() => setEpisodeId(episode.id)}><Text style={{ color: colors.foreground }}>{episodeId === episode.id ? '✓ ' : ''}Episode {episode.number}: {episode.title}</Text></Pressable>)}
-    {selectedEpisode ? <VoicedEpisodePreview episodeId={selectedEpisode.id} episodeTitle={`${selectedEpisode.number}: ${selectedEpisode.title}`} hasClips={hasReadyEpisodeClips} /> : null}
-    <Pressable testID="mobile-build-movies" accessibilityRole="button" accessibilityState={{ disabled: queuing }} disabled={queuing} style={{ ...button, backgroundColor: colors.primary }} onPress={queue}><Text style={{ color: colors.primaryForeground, fontWeight: '700' }}>{queuing ? 'Queuing…' : unfinishedBatches.current.has(episodeId) ? 'Retry MP4 build · unfinished formats' : 'Build MP4 · both orientations & resolutions'}</Text></Pressable>
-    <Text style={{ color: colors.foreground, fontSize: 22, fontFamily: 'Fraunces_600SemiBold' }}>Saved movies</Text>
-    <Pressable testID="mobile-refresh-movies" accessibilityRole="button" accessibilityState={{ disabled: exports.isFetching }} disabled={exports.isFetching} style={button} onPress={() => { if (!exports.isFetching) void exports.refetch(); }}><Text style={{ color: colors.foreground }}>{exports.isRefetching ? 'Refreshing movies…' : 'Refresh movies'}</Text></Pressable>
-    {exports.isLoading && <ActivityIndicator testID="mobile-movies-loading" color={colors.primary} />}
-    {exports.isError && !exports.isFetchNextPageError && <Text accessibilityRole="alert" style={{ color: colors.destructive }}>Could not refresh saved movies. Use Refresh movies to retry. Previously loaded movies are still available.</Text>}
-    {!exports.isLoading && !exports.isError && exports.jobs.length === 0 && <Text style={{ color: colors.mutedForeground }}>No saved movies yet. Build a storyboard movie to see it here.</Text>}
+        disabled={!activeShot}
+        loading={generateClip.isPending}
+        label={generateClip.isPending ? 'Generating clip…' : 'Generate video clip'}
+      />
+    </Card>
+
+    {!!error && <Notice tone="error">{error}</Notice>}
+
+    <Card>
+      <SectionTitle step="2" title="Build a storyboard movie" caption="Choose the whole series or one episode. We build both orientations at 720p and 1080p." />
+      <View style={{ gap: 8 }}>
+        <Chip label="Entire series · one MP4" selected={episodeId === null} onPress={() => setEpisodeId(null)} />
+        {query.data.episodes.map(episode => <Chip key={episode.id} label={`Episode ${episode.number}: ${episode.title}`} selected={episodeId === episode.id} onPress={() => setEpisodeId(episode.id)} />)}
+      </View>
+      {selectedEpisode ? <VoicedEpisodePreview episodeId={selectedEpisode.id} episodeTitle={`${selectedEpisode.number}: ${selectedEpisode.title}`} hasClips={hasReadyEpisodeClips} /> : null}
+      <Button
+        testID="mobile-build-movies"
+        disabled={queuing}
+        onPress={queue}
+        label={queuing ? 'Queuing…' : unfinishedBatches.current.has(episodeId) ? 'Retry MP4 build · unfinished formats' : 'Build MP4 · both orientations & resolutions'}
+      />
+    </Card>
+
+    <SectionHeader
+      title="Saved movies"
+      right={<Button compact variant="secondary" testID="mobile-refresh-movies" disabled={exports.isFetching} onPress={() => { if (!exports.isFetching) void exports.refetch(); }} label={exports.isRefetching ? 'Refreshing movies…' : 'Refresh movies'} />}
+    />
+    {exports.isLoading && <ActivityIndicator testID="mobile-movies-loading" color={colors.teal} />}
+    {exports.isError && !exports.isFetchNextPageError && <Notice tone="error">Could not refresh saved movies. Use Refresh movies to retry. Previously loaded movies are still available.</Notice>}
+    {!exports.isLoading && !exports.isError && exports.jobs.length === 0 && <EmptyState title="No saved movies yet" body="Build a storyboard movie to see it here." />}
     {selectedClip === null && movie?.url && <PrivateVideo key={movie.url} url={movie.url} label={`Storyboard #${movie.id} · ${movie.aspectRatio} · ${movie.quality}`} />}
     {selectedClip !== null && activeClip?.url && <PrivateVideo key={`clip-${selectedClip}`} url={activeClip.url} label={activeClip.provider} />}
-    {exports.jobs.map(job => <Pressable key={job.id} testID={`mobile-select-movie-${job.id}`} accessibilityRole="button" accessibilityState={{ selected: selectedClip === null && movie?.id === job.id, disabled: job.status !== 'ready' || !job.url }} style={button} disabled={job.status !== 'ready' || !job.url} onPress={() => { setSelected(job.id); setSelectedClip(null); }}><Text style={{ color: colors.foreground }}>#{job.id} · {job.episodeId ? `Episode ${query.data?.episodes.find(episode => episode.id === job.episodeId)?.number}` : 'Series'} · {job.aspectRatio} · {job.quality} · {job.status} {job.status === 'rendering' ? `${job.progress}%` : ''}</Text>{job.error && <Text style={{ color: colors.destructive }}>{job.error}</Text>}</Pressable>)}
-    {exports.isFetchNextPageError && <Text accessibilityRole="alert" style={{ color: colors.destructive }}>Could not load older movies. Your loaded movies are still available.</Text>}
-    {exports.hasNextPage && <Pressable
+    {exports.jobs.map(job => {
+      const isSelected = selectedClip === null && movie?.id === job.id;
+      const playable = job.status === 'ready' && !!job.url;
+      return <Pressable
+        key={job.id}
+        testID={`mobile-select-movie-${job.id}`}
+        accessibilityRole="button"
+        accessibilityState={{ selected: isSelected, disabled: !playable }}
+        accessibilityHint={playable ? 'Plays this movie above' : undefined}
+        disabled={!playable}
+        onPress={() => { setSelected(job.id); setSelectedClip(null); }}
+        style={{ borderWidth: 1, borderRadius: 14, padding: 14, gap: 6, backgroundColor: colors.card, borderColor: isSelected ? colors.teal : colors.border }}
+      >
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
+          <Text style={{ color: colors.foreground, fontFamily: fonts.bold, fontSize: 15, flexShrink: 1 }}>#{job.id} · {episodeLabel(job.episodeId)}</Text>
+          <Badge label={job.status === 'rendering' ? `${job.status} ${job.progress}%` : job.status} tone={statusTone(job.status)} />
+        </View>
+        <Text style={{ color: colors.mutedForeground, fontFamily: fonts.medium, fontSize: 13 }}>{job.aspectRatio === '9:16' ? 'Portrait' : 'Landscape'} · {job.aspectRatio} · {job.quality}{isSelected ? ' · Now playing' : ''}</Text>
+        {job.status === 'rendering' ? <ProgressBar value={job.progress} /> : null}
+        {job.error && <Text style={{ color: colors.destructive, fontFamily: fonts.regular, fontSize: 13 }}>{job.error}</Text>}
+      </Pressable>;
+    })}
+    {exports.isFetchNextPageError && <Notice tone="error">Could not load older movies. Your loaded movies are still available.</Notice>}
+    {exports.hasNextPage && <Button
+      variant="secondary"
       testID="mobile-load-older-movies"
-      accessibilityRole="button"
-      accessibilityState={{ disabled: exports.isFetching }}
       disabled={exports.isFetching}
-      style={button}
       onPress={() => { if (!exports.isFetching) void exports.fetchNextPage({ cancelRefetch: false }); }}
-    ><Text style={{ color: colors.foreground }}>{exports.isFetchingNextPage ? 'Loading older movies…' : exports.isFetchNextPageError ? 'Retry older movies' : 'Load older movies'}</Text></Pressable>}
-    {exports.jobs.length > 0 && !exports.hasNextPage && !exports.isLoading && <Text testID="mobile-movies-end" style={{ color: colors.mutedForeground }}>All saved movies loaded.</Text>}
-    <Text style={{ color: colors.foreground, fontSize: 22, fontFamily: 'Fraunces_600SemiBold' }}>Rendered clips</Text>
-    {readyClips.length ? readyClips.map(clip => <Pressable key={clip.id} style={button} testID={`mobile-select-clip-${clip.id}`} onPress={() => setSelectedClip(clip.id)}><Text style={{ color: colors.foreground }}>Preview {clip.provider} · {clip.duration}</Text></Pressable>) : <Text style={{ color: colors.mutedForeground }}>No finished videos yet. Only real clips with playable video files appear here.</Text>}
+      label={exports.isFetchingNextPage ? 'Loading older movies…' : exports.isFetchNextPageError ? 'Retry older movies' : 'Load older movies'}
+    />}
+    {exports.jobs.length > 0 && !exports.hasNextPage && !exports.isLoading && <Text testID="mobile-movies-end" style={{ color: colors.mutedForeground, textAlign: 'center', fontFamily: fonts.medium, fontSize: 12 }}>All saved movies loaded.</Text>}
+
+    <SectionHeader title="Rendered clips" caption="Tap a clip to preview it in the player above." />
+    {readyClips.length ? readyClips.map(clip => <Pressable
+      key={clip.id}
+      testID={`mobile-select-clip-${clip.id}`}
+      accessibilityRole="button"
+      accessibilityState={{ selected: selectedClip === clip.id }}
+      onPress={() => setSelectedClip(clip.id)}
+      style={{ flexDirection: 'row', alignItems: 'center', gap: 12, borderWidth: 1, borderRadius: 14, padding: 14, backgroundColor: colors.card, borderColor: selectedClip === clip.id ? colors.teal : colors.border }}
+    >
+      <View style={{ width: 34, height: 34, borderRadius: 17, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center' }}>
+        <Text style={{ color: colors.accentForeground, fontFamily: fonts.bold }}>▶</Text>
+      </View>
+      <Text style={{ color: colors.foreground, fontFamily: fonts.semibold, flex: 1 }}>Preview {clip.provider} · {clip.duration}</Text>
+    </Pressable>) : <EmptyState title="No finished videos yet" body="Only real clips with playable video files appear here." />}
   </KeyboardAwareScrollViewCompat>;
+}
+
+function SectionTitle({ step, title, caption }: { step: string; title: string; caption?: string }) {
+  const colors = useColors();
+  return (
+    <View style={{ flexDirection: 'row', gap: 12, alignItems: 'flex-start' }}>
+      <View style={{ width: 28, height: 28, borderRadius: 14, backgroundColor: colors.accent, alignItems: 'center', justifyContent: 'center', marginTop: 2 }}>
+        <Text style={{ fontFamily: fonts.bold, fontSize: 13, color: colors.accentForeground }}>{step}</Text>
+      </View>
+      <View style={{ flex: 1, gap: 4 }}>
+        <Text accessibilityRole="header" style={{ color: colors.foreground, fontSize: 20, fontFamily: fonts.serif }}>{title}</Text>
+        {caption ? <Text style={{ color: colors.mutedForeground, lineHeight: 20, fontFamily: fonts.regular, fontSize: 13 }}>{caption}</Text> : null}
+      </View>
+    </View>
+  );
 }

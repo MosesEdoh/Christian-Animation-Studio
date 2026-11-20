@@ -3,8 +3,7 @@ import { Platform } from 'react-native';
 import { useAuth, useUser } from '@clerk/expo';
 import { setAuthTokenGetter, setDeviceTrustTokenGetter } from '@workspace/api-client-react';
 import { useQueryClient } from '@tanstack/react-query';
-import { View, Text, ActivityIndicator } from 'react-native';
-import { useColors } from '@/hooks/useColors';
+import { StateScreen } from '@/components/ui';
 import { MobileSignIn } from '@/components/MobileSignIn';
 import { TrustedDeviceGate } from '@/components/TrustedDeviceGate';
 import { getTrustedDeviceToken } from '@/lib/trusted-device';
@@ -30,7 +29,6 @@ export function MobileSession({ children }: { children: ReactNode }) {
 }
 export function AuthGate({ children }: { children: ReactNode }) {
   const { isLoaded, isSignedIn } = useUser();
-  const colors = useColors();
-  if (!isLoaded) return <View><ActivityIndicator color={colors.primary} /><Text>Loading…</Text></View>;
+  if (!isLoaded) return <StateScreen loading message="Loading your account…" />;
   return isSignedIn ? <TrustedDeviceGate>{children}</TrustedDeviceGate> : <MobileSignIn />;
 }

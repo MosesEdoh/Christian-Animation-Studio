@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Alert, Platform, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   getListStudioChildProfilesQueryKey,
@@ -12,7 +12,8 @@ import {
 } from '@workspace/api-client-react';
 import { useColors } from '@/hooks/useColors';
 import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { Button, Chip, EmptyState, FieldLabel, Notice, ScreenHeader, fonts } from '@/components/ui';
+import { confirmAction } from '@/lib/confirm';
 
 const ageBands: Array<{ value: ChildProfileAgeBand; label: string }> = [
   { value: '5-8', label: '5–8' },
@@ -30,7 +31,6 @@ function getErrorMessage(error: unknown) {
 
 export default function FamilyScreen() {
   const colors = useColors();
-  const insets = useSafeAreaInsets();
   const queryClient = useQueryClient();
   const profiles = useListStudioChildProfiles();
   const createProfile = useCreateStudioChildProfile();
@@ -98,46 +98,30 @@ export default function FamilyScreen() {
     }
   }
 
-  function confirmDelete(profile: ChildProfile) {
-    Alert.alert(
-      'Remove child profile?',
-      `Remove ${profile.displayName}’s profile? Studio work is not deleted. The profile has no separate login.`,
-      [
-        { text: 'Keep profile', style: 'cancel' },
-        {
-          text: 'Remove profile',
-          style: 'destructive',
-          onPress: () => void (async () => {
-            setError('');
-            setMessage('');
-            try {
-              await deleteProfile.mutateAsync({ id: profile.id });
-              if (editing?.id === profile.id) resetForm();
-              await refreshProfiles();
-              setMessage('Child profile removed.');
-            } catch (cause) {
-              setError(getErrorMessage(cause));
-            }
-          })(),
-        },
-      ],
-    );
+  async function confirmDelete(profile: ChildProfile) {
+    const confirmed = await confirmAction({
+      title: 'Remove child profile?',
+      message: `Remove ${profile.displayName}’s profile? Studio work is not deleted. The profile has no separate login.`,
+      confirmLabel: 'Remove profile',
+      cancelLabel: 'Keep profile',
+      destructive: true,
+    });
+    if (!confirmed) return;
+    setError('');
+    setMessage('');
+    try {
+      await deleteProfile.mutateAsync({ id: profile.id });
+      if (editing?.id === profile.id) resetForm();
+      await refreshProfiles();
+      setMessage('Child profile removed.');
+    } catch (cause) {
+      setError(getErrorMessage(cause));
+    }
   }
 
   return (
-    <KeyboardAwareScrollViewCompat
-      contentContainerStyle={[
-        styles.content,
-        {
-          backgroundColor: colors.background,
-          paddingTop: Platform.OS === 'web' ? Math.max(insets.top, 67) : 24,
-          paddingBottom: Platform.OS === 'web' ? 118 : 110,
-        },
-      ]}
-    >
-      <Text style={[styles.kicker, { color: colors.coral }]}>GUARDIAN CONTROLS</Text>
-      <Text style={[styles.title, { color: colors.foreground }]}>Child profiles</Text>
-      <Text style={[styles.body, { color: colors.mutedForeground }]}>Create and manage supervised profiles from your adult account.</Text>
+    <KeyboardAwareScrollViewCompat screen>
+      <ScreenHeader kicker="GUARDIAN CONTROLS" title="Child profiles" subtitle="Create and manage supervised profiles from your adult account." />
 
       <View style={[styles.privacyCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
         <Text style={[styles.cardHeading, { color: colors.foreground }]}>Before creating or using a profile</Text>
@@ -145,17 +129,15 @@ export default function FamilyScreen() {
         <Text style={[styles.body, { color: colors.mutedForeground }]}>Child-safe mode stays on. Do not include identifying details in prompts or uploads. Age and parental-consent rules vary by location; this notice is not legal advice or a compliance certification.</Text>
       </View>
 
-      {error ? <Text accessibilityRole="alert" style={[styles.error, { color: colors.destructive }]}>{error}</Text> : null}
-      {message ? <Text accessibilityRole="alert" style={[styles.success, { color: colors.teal }]}>{message}</Text> : null}
-      <Text style={[styles.section, { color: colors.foreground }]}>Your profiles</Text>
+      {error ? <Notice tone="error">{error}</Notice> : null}
+      {message ? <Notice tone="success">{message}</Notice> : null}
+      <Text accessibilityRole="header" style={[styles.section, { color: colors.foreground }]}>Your profiles</Text>
       {profiles.isLoading ? <Text style={[styles.body, { color: colors.mutedForeground }]}>Loading profiles…</Text> : null}
       {profiles.isError ? <View style={styles.gap}>
-        <Text style={[styles.body, { color: colors.destructive }]}>{getErrorMessage(profiles.error)}</Text>
-        <Pressable accessibilityRole="button" onPress={() => void profiles.refetch()} testID="mobile-retry-child-profiles">
-          <Text style={{ color: colors.teal, fontWeight: '700' }}>Try again</Text>
-        </Pressable>
+        <Notice tone="error">{getErrorMessage(profiles.error)}</Notice>
+        <Button variant="secondary" label="Try again" loading={profiles.isFetching} onPress={() => void profiles.refetch()} testID="mobile-retry-child-profiles" />
       </View> : null}
-      {profiles.data?.length === 0 ? <Text style={[styles.body, { color: colors.mutedForeground }]}>No child profiles yet.</Text> : null}
+      {profiles.data?.length === 0 ? <EmptyState title="No child profiles yet" body="Add a supervised profile below. Only a nickname and age range are stored." /> : null}
       {profiles.data?.map((profile) => (
         <View key={profile.id} style={[styles.profileCard, { backgroundColor: colors.card, borderColor: colors.border }]} testID={`mobile-child-profile-${profile.id}`}>
           <View style={styles.profileIdentity}>
@@ -167,16 +149,16 @@ export default function FamilyScreen() {
             </View>
           </View>
           <View style={styles.actions}>
-            <Pressable accessibilityRole="button" onPress={() => editProfile(profile)} disabled={pending} testID={`mobile-edit-child-profile-${profile.id}`}><Text style={{ color: colors.teal, fontWeight: '700' }}>Edit</Text></Pressable>
-            <Pressable accessibilityRole="button" onPress={() => void changeStatus(profile)} disabled={pending} testID={`mobile-toggle-child-profile-${profile.id}`}><Text style={{ color: colors.teal, fontWeight: '700' }}>{profile.status === 'active' ? 'Pause' : 'Resume'}</Text></Pressable>
-            <Pressable accessibilityRole="button" onPress={() => confirmDelete(profile)} disabled={pending} testID={`mobile-delete-child-profile-${profile.id}`}><Text style={{ color: colors.destructive, fontWeight: '700' }}>Remove</Text></Pressable>
+            <Button compact variant="secondary" label="Edit" accessibilityLabel={`Edit ${profile.displayName}`} onPress={() => editProfile(profile)} disabled={pending} testID={`mobile-edit-child-profile-${profile.id}`} />
+            <Button compact variant="secondary" label={profile.status === 'active' ? 'Pause' : 'Resume'} accessibilityLabel={`${profile.status === 'active' ? 'Pause' : 'Resume'} ${profile.displayName}`} onPress={() => void changeStatus(profile)} disabled={pending} testID={`mobile-toggle-child-profile-${profile.id}`} />
+            <Button compact variant="danger" label="Remove" accessibilityLabel={`Remove ${profile.displayName}`} onPress={() => void confirmDelete(profile)} disabled={pending} testID={`mobile-delete-child-profile-${profile.id}`} />
           </View>
         </View>
       ))}
 
       <View style={[styles.formCard, { backgroundColor: colors.card, borderColor: colors.border }]}>
         <Text style={[styles.cardHeading, { color: colors.foreground }]}>{editing ? `Edit ${editing.displayName}` : 'Add a child profile'}</Text>
-        <Text style={[styles.label, { color: colors.foreground }]}>Nickname</Text>
+        <FieldLabel hint="Use a nickname, not a full name.">Nickname</FieldLabel>
         <TextInput
           value={displayName}
           onChangeText={setDisplayName}
@@ -188,20 +170,18 @@ export default function FamilyScreen() {
           accessibilityLabel="Child profile nickname"
           testID="mobile-child-profile-name"
         />
-        <Text style={[styles.label, { color: colors.foreground }]}>Age range</Text>
+        <FieldLabel hint="Stories and checks are tuned to this range.">Age range</FieldLabel>
         <View style={styles.ageOptions}>
           {ageBands.map((band) => {
             const selected = ageBand === band.value;
-            return <Pressable
+            return <Chip
               key={band.value}
-              accessibilityRole="button"
-              accessibilityState={{ selected }}
+              grow
+              selected={selected}
               onPress={() => setAgeBand(band.value)}
-              style={[styles.ageOption, { backgroundColor: selected ? colors.primary : colors.secondary, borderColor: colors.border }]}
+              label={`Ages ${band.label}`}
               testID={`mobile-child-age-${band.value}`}
-            >
-              <Text style={{ color: selected ? colors.primaryForeground : colors.foreground, fontWeight: '700' }}>Ages {band.label}</Text>
-            </Pressable>;
+            />;
           })}
         </View>
         {!editing ? <Pressable
@@ -220,16 +200,19 @@ export default function FamilyScreen() {
           <Text style={[styles.setting, { color: colors.teal }]}>Saved child-safe setting: On</Text>
           <Text style={[styles.caption, { color: colors.mutedForeground }]}>It is locked on for child profiles.</Text>
         </View>
-        {editing ? <Pressable accessibilityRole="button" onPress={resetForm} style={styles.cancelButton}><Text style={{ color: colors.teal, fontWeight: '700' }}>Cancel edit</Text></Pressable> : null}
-        <Pressable
-          accessibilityRole="button"
-          onPress={() => void saveProfile()}
-          disabled={pending || !displayName.trim() || (!editing && !guardianConsent)}
-          style={[styles.saveButton, { backgroundColor: colors.primary, opacity: pending || !displayName.trim() || (!editing && !guardianConsent) ? 0.5 : 1 }]}
-          testID="mobile-save-child-profile"
-        >
-          <Text style={[styles.saveText, { color: colors.primaryForeground }]}>{pending ? 'Saving…' : editing ? 'Save changes' : 'Create supervised profile'}</Text>
-        </Pressable>
+        <View style={{ flexDirection: 'row', gap: 10, marginTop: 4 }}>
+          {editing ? <View style={{ flex: 1 }}><Button variant="secondary" label="Cancel edit" onPress={resetForm} /></View> : null}
+          <View style={{ flex: 1 }}>
+            <Button
+              onPress={() => void saveProfile()}
+              disabled={!displayName.trim() || (!editing && !guardianConsent)}
+              loading={pending}
+              testID="mobile-save-child-profile"
+              label={pending ? 'Saving…' : editing ? 'Save changes' : 'Create supervised profile'}
+            />
+          </View>
+        </View>
+        {!editing && !guardianConsent ? <Text style={[styles.caption, { color: colors.mutedForeground }]}>Confirm the guardian statement above to create a profile.</Text> : null}
       </View>
     </KeyboardAwareScrollViewCompat>
   );
@@ -241,15 +224,15 @@ const styles = StyleSheet.create({
   title: { fontFamily: 'Fraunces_600SemiBold', fontSize: 29, marginBottom: 2 },
   body: { fontFamily: 'Manrope_400Regular', fontSize: 14, lineHeight: 21 },
   privacyCard: { borderWidth: 1, borderRadius: 16, padding: 16, gap: 9, marginTop: 4 },
-  cardHeading: { fontFamily: 'Manrope_700Bold', fontSize: 16 },
-  section: { fontFamily: 'Manrope_700Bold', fontSize: 20, marginTop: 10 },
+  cardHeading: { fontFamily: fonts.bold, fontSize: 16 },
+  section: { fontFamily: fonts.serif, fontSize: 22, marginTop: 10 },
   profileCard: { borderWidth: 1, borderRadius: 16, padding: 15, gap: 12 },
   profileIdentity: { flexDirection: 'row', alignItems: 'center', gap: 12 },
   avatar: { height: 42, width: 42, borderRadius: 21, alignItems: 'center', justifyContent: 'center' },
   avatarText: { fontSize: 18, fontWeight: '700' },
   profileDetails: { flex: 1, gap: 3 },
   setting: { fontSize: 12, fontWeight: '700' },
-  actions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 20, paddingTop: 3 },
+  actions: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, paddingTop: 3, flexWrap: 'wrap' },
   formCard: { borderWidth: 1, borderRadius: 16, padding: 16, gap: 11, marginTop: 6 },
   label: { fontSize: 13, fontWeight: '700', marginTop: 3 },
   input: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 11, fontFamily: 'Manrope_400Regular', fontSize: 15 },
