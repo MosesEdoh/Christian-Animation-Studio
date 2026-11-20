@@ -5,6 +5,7 @@ import { shadcn } from '@clerk/themes';
 import { useLocation } from 'wouter';
 import { useQueryClient } from '@tanstack/react-query';
 import { activateMovieBatchAccount } from '../lib/movieBatchProgress';
+import { AuthShell } from './PublicPages';
 
 const clerkPubKey = publishableKeyFromHost(
   window.location.hostname,
@@ -30,21 +31,21 @@ const clerkAppearance = {
     logoImageUrl: `${window.location.origin}${basePath}/logo.svg`,
   },
   variables: {
-    colorPrimary: '#236d67', colorForeground: '#253d3c', colorMutedForeground: '#526866',
-    colorDanger: '#a83232', colorBackground: '#fffdf8', colorInput: '#ffffff',
-    colorInputForeground: '#253d3c', colorNeutral: '#253d3c',
+    colorPrimary: '#292743', colorForeground: '#20243d', colorMutedForeground: '#5e6278',
+    colorDanger: '#b4483a', colorBackground: '#fbf8f1', colorInput: '#ffffff',
+    colorInputForeground: '#20243d', colorNeutral: '#20243d',
     fontFamily: 'Manrope, sans-serif', borderRadius: '0.75rem',
   },
   elements: {
     rootBox: "w-full flex justify-center",
-    cardBox: "bg-[#fffdf8] rounded-2xl w-[440px] max-w-full overflow-hidden",
+    cardBox: "bg-[#fbf8f1] rounded-2xl w-[420px] border border-[#ddd6c8] shadow-[0_18px_50px_rgba(32,36,61,0.08)] max-w-full overflow-hidden",
     card: "!shadow-none !border-0 !bg-transparent !rounded-none",
     footer: "!shadow-none !border-0 !bg-transparent !rounded-none",
-    headerTitle: "text-[#253d3c]", headerSubtitle: "text-[#526866]",
-    socialButtonsBlockButtonText: "text-[#253d3c]", formFieldLabel: "text-[#253d3c]",
-    footerActionLink: "text-[#236d67]", footerActionText: "text-[#526866]",
-    dividerText: "text-[#526866]", identityPreviewEditButton: "text-[#236d67]",
-    formFieldSuccessText: "text-[#236d67]", alertText: "text-[#a83232]",
+    headerTitle: "text-[#20243d]", headerSubtitle: "text-[#5e6278]",
+    socialButtonsBlockButtonText: "text-[#20243d]", formFieldLabel: "text-[#20243d]",
+    footerActionLink: "text-[#3f7f7d]", footerActionText: "text-[#5e6278]",
+    dividerText: "text-[#5e6278]", identityPreviewEditButton: "text-[#3f7f7d]",
+    formFieldSuccessText: "text-[#3f7f7d]", alertText: "text-[#b4483a]",
     formButtonPrimary: "text-white",
   },
 };
@@ -86,14 +87,14 @@ export function ClerkQueryClientCacheInvalidator() {
   return null;
 }
 export function SignInPage() {
-  return <main className="flex min-h-[100dvh] items-center justify-center bg-background px-4">
+  return <AuthShell mode="sign-in">
     <SignIn routing="path" path={`${basePath}/sign-in`} signUpUrl={`${basePath}/sign-up`} />
-  </main>;
+  </AuthShell>;
 }
 export function SignUpPage() {
-  return <main className="flex min-h-[100dvh] items-center justify-center bg-background px-4">
+  return <AuthShell mode="sign-up">
     <SignUp routing="path" path={`${basePath}/sign-up`} signInUrl={`${basePath}/sign-in`} />
-  </main>;
+  </AuthShell>;
 }
 export function LogoutButton({ testId }: { testId?: string }) {
   const { signOut } = useClerk();

@@ -6,6 +6,8 @@ import { ClerkProviderWithRoutes, ClerkQueryClientCacheInvalidator, SignInPage, 
 import { MovieExports } from './components/MovieExports';
 import { EpisodeDownload } from './components/EpisodeDownload';
 import { ChildProfilesPanel } from './components/ChildProfilesPanel';
+import { BrandScreen, LandingPage, LoadingScreen } from './components/PublicPages';
+import { ConfirmDialog, ModalScrim, useDialogBehavior } from './components/Dialog';
 import {
   AlertTriangle,
   Aperture,
@@ -128,18 +130,13 @@ function RoutedErrorBoundary({ children }: { children: ReactNode }) {
 
 function Home() {
   const { isLoaded, isSignedIn } = useUser();
-  if (!isLoaded) return <p>Loading…</p>;
+  if (!isLoaded) return <LoadingScreen message="Opening the studio…" />;
   if (isSignedIn) return <Redirect to="/studio" />;
-  return <main className="content-wrap" style={{ maxWidth: 620, margin: '10vh auto' }}>
-    <span className="eyebrow">FRAME & FAITH</span><h1>Your private studio</h1>
-    <p>Sign in with any verified email, then trust this browser to view scripts, references, videos, and downloads.</p>
-    <Link className="btn btn-primary" href="/sign-in" data-testid="login-btn">Sign in</Link>
-    <Link className="btn btn-quiet" href="/sign-up">Create account</Link>
-  </main>;
+  return <LandingPage />;
 }
 function StudioGate() {
   const { user, isLoaded } = useUser();
-  if (!isLoaded) return <p>Checking private studio access…</p>;
+  if (!isLoaded) return <LoadingScreen message="Checking private studio access…" />;
   if (!user) return <Redirect to="/" />;
   const authUser: AuthUser = {
     id: user.externalId ?? user.id, email: user.primaryEmailAddress?.emailAddress ?? null,
@@ -178,38 +175,46 @@ function TrustedDeviceGate({ children }: { children: ReactNode }) {
   }
 
   if (status.isPending) {
-    return <main className="content-wrap" style={{ maxWidth: 620, margin: '10vh auto' }}>
-      <span className="eyebrow">FRAME & FAITH</span><p>Checking this browser…</p>
-    </main>;
+    return <LoadingScreen message="Checking this browser…" />;
   }
   if (status.isError) {
-    return <main className="content-wrap" style={{ maxWidth: 620, margin: '10vh auto' }}>
-      <span className="eyebrow">FRAME & FAITH</span><h1>Studio access needs attention</h1>
-      <p role="alert">{status.error instanceof Error ? status.error.message : 'Use a verified email address and try again.'}</p>
-      <button className="btn btn-primary" data-testid="button-retry-device-status" onClick={() => void status.refetch()}>Retry</button>
-      <LogoutButton />
-    </main>;
+    return <BrandScreen step="Access check">
+      <span className="brand-screen-icon is-warning" aria-hidden="true"><AlertTriangle size={20} /></span>
+      <h1 className="brand-screen-title">Studio access needs attention</h1>
+      <p className="brand-screen-alert" role="alert">{status.error instanceof Error ? status.error.message : 'Use a verified email address and try again.'}</p>
+      <div className="brand-screen-actions">
+        <button type="button" className="btn btn-primary" data-testid="button-retry-device-status" onClick={() => void status.refetch()}><RefreshCw size={14} /> Retry</button>
+        <LogoutButton />
+      </div>
+    </BrandScreen>;
   }
   if (!status.data?.trusted) {
-    return <main className="content-wrap" style={{ maxWidth: 620, margin: '10vh auto' }}>
-      <span className="eyebrow"><ShieldCheck size={14} /> FRAME & FAITH</span>
-      <h1>Trust this browser</h1>
-      <p>Use a verified email to add this browser. Afterward, any verified email signed in here can access the same shared studio.</p>
-      {actionError && <p role="alert">{actionError}</p>}
-      <button className="btn btn-primary" data-testid="button-trust-device" disabled={enroll.isPending} onClick={() => void trustBrowser()}>
-        {enroll.isPending ? 'Trusting browser…' : 'Trust this browser'}
-      </button>
-      <LogoutButton />
-    </main>;
+    return <BrandScreen step="Final step · Secure this browser">
+      <span className="brand-screen-icon" aria-hidden="true"><ShieldCheck size={20} /></span>
+      <h1 className="brand-screen-title">Trust this browser</h1>
+      <p className="brand-screen-copy">Use a verified email to add this browser. Afterward, any verified email signed in here can access the same shared studio.</p>
+      <ul className="brand-screen-list">
+        <li><Check size={14} aria-hidden="true" /> Unlocks private scripts, reference images, and videos</li>
+        <li><Check size={14} aria-hidden="true" /> Only trust a computer or phone you control</li>
+        <li><Check size={14} aria-hidden="true" /> You can forget this browser at any time</li>
+      </ul>
+      {actionError && <p className="brand-screen-alert" role="alert">{actionError}</p>}
+      <div className="brand-screen-actions">
+        <button type="button" className="btn btn-primary btn-lg" data-testid="button-trust-device" disabled={enroll.isPending} onClick={() => void trustBrowser()}>
+          {enroll.isPending ? <><LoaderCircle size={15} className="loading-mark" aria-hidden="true" /> Trusting browser…</> : <><ShieldCheck size={15} aria-hidden="true" /> Trust this browser</>}
+        </button>
+        <LogoutButton />
+      </div>
+    </BrandScreen>;
   }
   return <>
-    <div data-testid="trusted-device-banner" style={{ minHeight: 38, padding: '6px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, background: 'var(--surface-subtle, #f4f2ed)', borderBottom: '1px solid var(--border, #dedbd4)' }}>
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7 }}><ShieldCheck size={15} /> Trusted device · {status.data.deviceLabel ?? 'This browser'}</span>
-      <button className="btn btn-quiet" data-testid="button-forget-device" disabled={revoke.isPending} onClick={() => void forgetBrowser()}>
-        {revoke.isPending ? 'Removing…' : 'Forget'}
+    <div className="trusted-strip" data-testid="trusted-device-banner">
+      <span className="trusted-strip-label"><ShieldCheck size={14} aria-hidden="true" /> Trusted device · {status.data.deviceLabel ?? 'This browser'}</span>
+      <button type="button" className="trusted-strip-action" data-testid="button-forget-device" disabled={revoke.isPending} onClick={() => void forgetBrowser()}>
+        {revoke.isPending ? 'Removing…' : 'Forget this browser'}
       </button>
     </div>
-    {actionError && <p role="alert">{actionError}</p>}
+    {actionError && <p className="trusted-strip-error" role="alert">{actionError}</p>}
     {children}
   </>;
 }
@@ -223,6 +228,7 @@ function StudioWorkspace({ authUser }: { authUser: AuthUser }) {
   const [showProjectEditor, setShowProjectEditor] = useState(false);
   const [showChildProfiles, setShowChildProfiles] = useState(false);
   const [showCharacterEditor, setShowCharacterEditor] = useState(false);
+  const [confirmCompleteEpisode, setConfirmCompleteEpisode] = useState(false);
   const [editingCharacter, setEditingCharacter] = useState<Character | null>(null);
   const [projectForm, setProjectForm] = useState<ProjectForm>({
     title: '',
@@ -367,7 +373,7 @@ function StudioWorkspace({ authUser }: { authUser: AuthUser }) {
 
   useEffect(() => {
     if (!toast) return;
-    const timeout = window.setTimeout(() => setToast(null), 3600);
+    const timeout = window.setTimeout(() => setToast(null), toast.kind === 'error' ? 7000 : 3600);
     return () => window.clearTimeout(timeout);
   }, [toast]);
 
@@ -465,16 +471,13 @@ function StudioWorkspace({ authUser }: { authUser: AuthUser }) {
     }
   };
 
-  const completeActiveEpisode = () => {
+  const completeActiveEpisode = (confirmed = false) => {
     if (!activeEpisode || completeEpisode.isPending) return;
-    if (
-      episodeScenes.length > 0 &&
-      !window.confirm(
-        'Generate a complete six-scene script and storyboard for this episode? Existing scene text and the first four storyboard cards per scene will be replaced. Character references and storyboard reference images will be kept.',
-      )
-    ) {
+    if (episodeScenes.length > 0 && !confirmed) {
+      setConfirmCompleteEpisode(true);
       return;
     }
+    setConfirmCompleteEpisode(false);
 
     const runCompletion = () => {
       completeEpisode.mutate(
@@ -833,6 +836,31 @@ function StudioWorkspace({ authUser }: { authUser: AuthUser }) {
     );
   };
 
+  // Ctrl/Cmd+S saves the open scene; leaving the page with unsaved script edits asks first.
+  const saveShortcut = useRef<() => void>(() => undefined);
+  saveShortcut.current = () => {
+    if (view === 'script' && sceneHasUnsavedChanges && !updateScene.isPending) persistActiveScene();
+  };
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if ((event.ctrlKey || event.metaKey) && !event.altKey && event.key.toLowerCase() === 's') {
+        event.preventDefault();
+        saveShortcut.current();
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+  useEffect(() => {
+    if (!sceneHasUnsavedChanges) return;
+    const onBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = '';
+    };
+    window.addEventListener('beforeunload', onBeforeUnload);
+    return () => window.removeEventListener('beforeunload', onBeforeUnload);
+  }, [sceneHasUnsavedChanges]);
+
   const renderView = () => {
     if (!bootstrap) return null;
     switch (view) {
@@ -846,7 +874,7 @@ function StudioWorkspace({ authUser }: { authUser: AuthUser }) {
             setSelectedSceneId={selectSceneSafely}
             onAddScene={addScene}
             creatingScenePending={createScene.isPending}
-            onCompleteEpisode={completeActiveEpisode}
+            onCompleteEpisode={() => completeActiveEpisode()}
             completingEpisodePending={completeEpisode.isPending}
             sceneHeading={sceneHeading}
             setSceneHeading={setSceneHeading}
@@ -957,6 +985,8 @@ function StudioWorkspace({ authUser }: { authUser: AuthUser }) {
             openProjectEditor={() => setShowProjectEditor(true)}
             openNewCharacter={openNewCharacter}
             openEditCharacter={openEditCharacter}
+            firstName={authUser.firstName ?? null}
+            onNavigate={navigateToView}
           />
         );
     }
@@ -1016,11 +1046,28 @@ function StudioWorkspace({ authUser }: { authUser: AuthUser }) {
           })}
         />
       ) : null}
+      {confirmCompleteEpisode && activeEpisode ? (
+        <ConfirmDialog
+          tone="caution"
+          title={`Complete Episode ${activeEpisode.number}?`}
+          body={<>
+            <p>This writes a complete six-scene script and storyboard for <strong>{activeEpisode.title}</strong>.</p>
+            <ul>
+              <li>Existing scene text and the first four storyboard cards per scene will be replaced.</li>
+              <li>Character references and storyboard reference images will be kept.</li>
+            </ul>
+          </>}
+          confirmLabel="Complete episode"
+          onConfirm={() => completeActiveEpisode(true)}
+          onCancel={() => setConfirmCompleteEpisode(false)}
+        />
+      ) : null}
       {toast ? (
-        <div className={`toast-stack`} role="status" data-testid="status-toast">
+        <div className={`toast-stack`} role={toast.kind === 'error' ? 'alert' : 'status'} aria-live={toast.kind === 'error' ? 'assertive' : 'polite'} data-testid="status-toast">
           <div className={`toast ${toast.kind === 'error' ? 'error' : ''}`}>
-            {toast.kind === 'error' ? <AlertTriangle size={15} /> : <CheckCircle2 size={15} />}
+            {toast.kind === 'error' ? <AlertTriangle size={15} aria-hidden="true" /> : <CheckCircle2 size={15} aria-hidden="true" />}
             <span>{toast.message}</span>
+            <button type="button" className="toast-close" aria-label="Dismiss notification" onClick={() => setToast(null)}><X size={13} /></button>
           </div>
         </div>
       ) : null}
@@ -1065,10 +1112,11 @@ function WorkspaceFrame({
                   type="button"
                   key={item.id}
                   className={view === item.id ? 'active' : ''}
+                  aria-current={view === item.id ? 'page' : undefined}
                   data-testid={`button-nav-${item.id}`}
                   onClick={() => setView(item.id)}
                 >
-                  <Icon size={16} strokeWidth={1.8} />
+                  <Icon size={16} strokeWidth={1.8} aria-hidden="true" />
                   <span className="side-nav-label">{item.label}</span>
                   <span className="side-nav-meta">{item.meta}</span>
                 </button>
@@ -1091,14 +1139,14 @@ function WorkspaceFrame({
               <strong data-testid="text-current-view">{navItems.find((item) => item.id === view)?.label}</strong>
             </div>
             <div className="topbar-actions">
-              <span className="status-pill"><span className="signal-dot" /> {project?.seasonLabel ?? 'Workspace ready'}</span>
-              {authUser && onManageProfiles ? <button type="button" className="btn btn-quiet guardian-controls-button" onClick={onManageProfiles} data-testid="button-open-guardian-controls"><UsersRound size={14} /> Guardian controls</button> : null}
+              <span className="status-pill hide-sm"><span className="signal-dot" /> {project?.seasonLabel ?? 'Workspace ready'}</span>
+              {authUser && onManageProfiles ? <button type="button" className="btn btn-quiet guardian-controls-button" onClick={onManageProfiles} data-testid="button-open-guardian-controls" aria-label="Guardian controls" title="Guardian controls"><UsersRound size={14} aria-hidden="true" /> <span className="hide-sm">Guardian controls</span></button> : null}
               {!authChecked ? null : authUser ? (
                 <LogoutButton testId="link-sign-out" />
               ) : (
                 <Link className="btn btn-quiet" href="/sign-in" data-testid="link-sign-in">Sign in to save images</Link>
               )}
-              <div className="avatar" data-testid="text-creator-avatar">{authUser?.firstName?.slice(0, 1) ?? 'JR'}</div>
+              <div className="avatar" data-testid="text-creator-avatar" title={authUser?.email ?? undefined} aria-label={`Signed in as ${creatorName(authUser)}`}>{creatorInitials(authUser)}</div>
             </div>
           </header>
           {children}
@@ -1106,6 +1154,26 @@ function WorkspaceFrame({
       </div>
     </div>
   );
+}
+
+function creatorName(user: AuthUser | null) {
+  const name = [user?.firstName, user?.lastName].filter(Boolean).join(' ').trim();
+  return name || user?.email || 'creator';
+}
+
+function creatorInitials(user: AuthUser | null) {
+  const fromName = [user?.firstName, user?.lastName]
+    .map((part) => part?.trim().charAt(0) ?? '')
+    .join('');
+  const initials = fromName || user?.email?.trim().charAt(0) || 'F';
+  return initials.toUpperCase();
+}
+
+function timeOfDayGreeting(date = new Date()) {
+  const hour = date.getHours();
+  if (hour < 12) return 'Good morning';
+  if (hour < 18) return 'Good afternoon';
+  return 'Good evening';
 }
 
 function LoadingWorkspace() {
@@ -1138,6 +1206,8 @@ function DashboardView({
   openProjectEditor,
   openNewCharacter,
   openEditCharacter,
+  firstName,
+  onNavigate,
 }: {
   project?: Project;
   episodes: Episode[];
@@ -1150,6 +1220,8 @@ function DashboardView({
   openProjectEditor: () => void;
   openNewCharacter: () => void;
   openEditCharacter: (character: Character) => void;
+  firstName?: string | null;
+  onNavigate?: (view: View) => void;
 }) {
   const activeEpisode = episodes.find((episode) => episode.id === project?.activeEpisodeId) ?? episodes[0];
   const downloadableEpisodeIds = useMemo(() => {
@@ -1190,7 +1262,7 @@ function DashboardView({
     <div className="content-wrap" data-testid="view-dashboard">
       <div className="page-intro">
         <div>
-          <p className="eyebrow">Good evening, creator</p>
+          <p className="eyebrow">{timeOfDayGreeting()}, {firstName?.trim() || 'creator'}</p>
           <h1 className="page-title">Make room for <span className="display-script">wonder.</span></h1>
           <p className="page-subtitle">Your writers room and animation control room, tuned for the next honest beat.</p>
         </div>
@@ -1240,9 +1312,18 @@ function DashboardView({
               <div className="stats-big">{activeEpisode ? `${activeEpisode.progress}%` : '—'}</div>
               <p className="stats-copy">{activeEpisode ? `Episode ${activeEpisode.number} · ${activeEpisode.title}` : 'No active episode yet.'}</p>
             </div>
-            <div className="sparkline" aria-label="Recent progress">
-              {[23, 32, 27, 39, 35, 47, 58, 71].map((height, index) => <i key={index} style={{ height }} />)}
-            </div>
+            {episodes.length ? (
+              <div className="sparkline" role="img" aria-label={`Episode progress: ${episodes.map((episode) => `episode ${episode.number} ${episode.progress}%`).join(', ')}`}>
+                {episodes.map((episode) => (
+                  <i
+                    key={episode.id}
+                    title={`E${String(episode.number).padStart(2, '0')} · ${episode.progress}%`}
+                    className={episode.id === activeEpisode?.id ? 'is-active' : undefined}
+                    style={{ height: Math.max(6, Math.round((episode.progress / 100) * 71)) }}
+                  />
+                ))}
+              </div>
+            ) : null}
           </div>
           <div>
             <div className="meta-label">Next up</div>
@@ -1250,6 +1331,7 @@ function DashboardView({
           </div>
         </section>
       </div>
+      {onNavigate ? <ProductionPath bootstrap={bootstrap} activeEpisode={activeEpisode} onNavigate={onNavigate} openNewCharacter={openNewCharacter} /> : null}
       <div className="dashboard-grid">
         <section className="panel pad" data-testid="panel-episodes">
           <div className="section-heading">
@@ -1274,7 +1356,7 @@ function DashboardView({
         <section className="panel pad" data-testid="panel-character-bible">
           <div className="section-heading">
             <div><h2>Character bible</h2><p>The people carry the lesson.</p></div>
-            <button type="button" className="icon-button" data-testid="button-add-character" onClick={openNewCharacter}><Plus size={15} /></button>
+            <button type="button" className="icon-button" aria-label="Add character" data-testid="button-add-character" onClick={openNewCharacter}><Plus size={15} /></button>
           </div>
           {characters.length ? (
             <div className="people-row">
@@ -1293,6 +1375,79 @@ function DashboardView({
         </section>
       </div>
     </div>
+  );
+}
+
+function ProductionPath({
+  bootstrap,
+  activeEpisode,
+  onNavigate,
+  openNewCharacter,
+}: {
+  bootstrap: StudioBootstrap;
+  activeEpisode?: Episode;
+  onNavigate: (view: View) => void;
+  openNewCharacter: () => void;
+}) {
+  const episodeSceneIds = new Set(
+    bootstrap.scenes.filter((scene) => scene.episodeId === activeEpisode?.id).map((scene) => scene.id),
+  );
+  const episodeShotIds = new Set(
+    bootstrap.shots.filter((shot) => episodeSceneIds.has(shot.sceneId)).map((shot) => shot.id),
+  );
+  const hasWrittenScene = bootstrap.scenes.some((scene) => episodeSceneIds.has(scene.id) && scene.content.trim().length > 0);
+  const readyClips = bootstrap.clips.filter((clip) => episodeShotIds.has(clip.shotId) && clip.status === 'ready').length;
+  const steps: Array<{ id: string; label: string; detail: string; done: boolean; icon: LucideIcon; action: () => void; cta: string }> = [
+    {
+      id: 'characters', label: 'Cast your characters', icon: UsersRound,
+      detail: bootstrap.characters.length ? `${bootstrap.characters.length} in the character bible` : 'Add the first voice to the story',
+      done: bootstrap.characters.length > 0, action: openNewCharacter, cta: 'Add character',
+    },
+    {
+      id: 'script', label: 'Write the script', icon: PenLine,
+      detail: episodeSceneIds.size ? `${episodeSceneIds.size} scene${episodeSceneIds.size === 1 ? '' : 's'} in this episode` : 'Draft scenes or complete the episode',
+      done: hasWrittenScene, action: () => onNavigate('script'), cta: 'Open Script Studio',
+    },
+    {
+      id: 'storyboard', label: 'Storyboard the shots', icon: Camera,
+      detail: episodeShotIds.size ? `${episodeShotIds.size} storyboard card${episodeShotIds.size === 1 ? '' : 's'}` : 'Suggest shots and add the keepers',
+      done: episodeShotIds.size > 0, action: () => onNavigate('cinematography'), cta: 'Open Cinematography',
+    },
+    {
+      id: 'animate', label: 'Animate and export', icon: Film,
+      detail: readyClips ? `${readyClips} clip${readyClips === 1 ? '' : 's'} ready to download` : 'Turn storyboard cards into motion',
+      done: readyClips > 0, action: () => onNavigate('animation'), cta: 'Open Animation',
+    },
+  ];
+  const nextIndex = steps.findIndex((step) => !step.done);
+  const completed = steps.filter((step) => step.done).length;
+  return (
+    <section className="panel pad production-path" aria-labelledby="production-path-title" data-testid="panel-production-path">
+      <div className="section-heading">
+        <div>
+          <h2 id="production-path-title">Production path</h2>
+          <p>{activeEpisode ? `Episode ${activeEpisode.number} · ${activeEpisode.title}` : 'Your next steps'} · {completed} of {steps.length} steps done</p>
+        </div>
+      </div>
+      <ol className="path-steps">
+        {steps.map((step, index) => {
+          const Icon = step.icon;
+          const isNext = index === nextIndex;
+          return (
+            <li key={step.id} className={`path-step ${step.done ? 'is-done' : ''} ${isNext ? 'is-next' : ''}`}>
+              <span className="path-step-icon" aria-hidden="true">{step.done ? <Check size={15} /> : <Icon size={15} />}</span>
+              <div className="path-step-copy">
+                <strong>{step.label}</strong>
+                <span>{step.detail}</span>
+              </div>
+              <button type="button" className={`btn ${isNext ? 'btn-sun' : 'btn-quiet'} path-step-action`} onClick={step.action} data-testid={`button-path-${step.id}`}>
+                {isNext ? 'Next: ' : ''}{step.cta}
+              </button>
+            </li>
+          );
+        })}
+      </ol>
+    </section>
   );
 }
 
@@ -1417,7 +1572,7 @@ function ScriptStudio({
                 <div className="editor-actions">
                   <button type="button" className="btn btn-sun" data-testid="button-generate-draft" onClick={runDraft} disabled={generateDraftPending}><WandSparkles size={14} /> {generateDraftPending ? 'Writing…' : 'Generate pass'}</button>
                   <button type="button" className="btn btn-quiet" data-testid="button-check-scene" onClick={runContentCheck} disabled={checkContentPending}><ShieldCheck size={14} /> {checkContentPending ? 'Checking…' : 'Audience check'}</button>
-                  <button type="button" className="btn btn-primary" data-testid="button-save-scene" onClick={saveScene} disabled={saveScenePending || !sceneHasUnsavedChanges}><Save size={14} /> {saveScenePending ? 'Saving…' : sceneHasUnsavedChanges ? 'Save script' : 'Saved'}</button>
+                  <button type="button" className="btn btn-primary" data-testid="button-save-scene" onClick={saveScene} disabled={saveScenePending || !sceneHasUnsavedChanges} title="Save script (Ctrl+S)" aria-keyshortcuts="Control+S Meta+S"><Save size={14} /> {saveScenePending ? 'Saving…' : sceneHasUnsavedChanges ? 'Save script' : 'Saved'}</button>
                 </div>
               </div>
               <div className="form-grid" style={{ marginTop: 17 }}>
@@ -1913,19 +2068,21 @@ function ProjectEditor({
   onSave: () => void;
   pending: boolean;
 }) {
+  const dialogRef = useRef<HTMLFormElement>(null);
+  useDialogBehavior(dialogRef, onClose);
   return (
-    <div className="modal-scrim" role="presentation">
-      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="project-editor-title" data-testid="modal-project-editor">
-        <div className="modal-header"><div><p className="eyebrow">Project card</p><h2 id="project-editor-title">Name the north star.</h2></div><button type="button" className="icon-button" data-testid="button-close-project-editor" onClick={onClose}><X size={15} /></button></div>
+    <ModalScrim onClose={onClose}>
+      <form ref={dialogRef} tabIndex={-1} className="modal" role="dialog" aria-modal="true" aria-labelledby="project-editor-title" data-testid="modal-project-editor" onSubmit={(event) => { event.preventDefault(); if (!pending) onSave(); }}>
+        <div className="modal-header"><div><p className="eyebrow">Project card</p><h2 id="project-editor-title">Name the north star.</h2></div><button type="button" className="icon-button" aria-label="Close" data-testid="button-close-project-editor" onClick={onClose}><X size={15} /></button></div>
         <div className="form-grid">
           <div className="field full"><label htmlFor="project-title">Title</label><input id="project-title" value={form.title} onChange={(event) => setForm({ ...form, title: event.target.value })} data-testid="input-project-title" /></div>
           <div className="field full"><label htmlFor="project-logline">Logline</label><textarea id="project-logline" value={form.logline} onChange={(event) => setForm({ ...form, logline: event.target.value })} data-testid="input-project-logline" /></div>
           <div className="field"><label htmlFor="project-audience">Audience</label><input id="project-audience" value={form.audience} onChange={(event) => setForm({ ...form, audience: event.target.value })} data-testid="input-project-audience" /></div>
           <div className="field"><label htmlFor="project-season">Season label</label><input id="project-season" value={form.seasonLabel} onChange={(event) => setForm({ ...form, seasonLabel: event.target.value })} data-testid="input-project-season" /></div>
         </div>
-        <div className="form-actions"><button type="button" className="btn btn-quiet" data-testid="button-cancel-project-editor" onClick={onClose}>Cancel</button><button type="button" className="btn btn-primary" data-testid="button-save-project" onClick={onSave} disabled={pending}><Save size={14} /> {pending ? 'Saving…' : 'Save project'}</button></div>
-      </div>
-    </div>
+        <div className="form-actions"><button type="button" className="btn btn-quiet" data-testid="button-cancel-project-editor" onClick={onClose}>Cancel</button><button type="submit" className="btn btn-primary" data-testid="button-save-project" disabled={pending}><Save size={14} /> {pending ? 'Saving…' : 'Save project'}</button></div>
+      </form>
+    </ModalScrim>
   );
 }
 
@@ -1949,12 +2106,14 @@ function CharacterEditor({
   const update = (key: keyof CharacterForm, value: string) => setForm({ ...form, [key]: value });
   const [uploadingReference, setUploadingReference] = useState(false);
   const [referenceError, setReferenceError] = useState('');
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useDialogBehavior(dialogRef, onClose);
   return (
-    <div className="modal-scrim" role="presentation">
-      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="character-editor-title" data-testid="modal-character-editor">
-        <div className="modal-header"><div><p className="eyebrow">Character bible</p><h2 id="character-editor-title">{editing ? 'Refine the character.' : 'Give the story a voice.'}</h2></div><button type="button" className="icon-button" data-testid="button-close-character-editor" onClick={onClose}><X size={15} /></button></div>
+    <ModalScrim onClose={onClose}>
+      <div ref={dialogRef} tabIndex={-1} className="modal" role="dialog" aria-modal="true" aria-labelledby="character-editor-title" data-testid="modal-character-editor">
+        <div className="modal-header"><div><p className="eyebrow">Character bible</p><h2 id="character-editor-title">{editing ? 'Refine the character.' : 'Give the story a voice.'}</h2></div><button type="button" className="icon-button" aria-label="Close" data-testid="button-close-character-editor" onClick={onClose}><X size={15} /></button></div>
         <div className="form-grid">
-          <div className="field"><label htmlFor="character-name">Name</label><input id="character-name" value={form.name} onChange={(event) => update('name', event.target.value)} data-testid="input-character-name" /></div>
+          <div className="field"><label htmlFor="character-name">Name <span className="required-mark" aria-hidden="true">*</span></label><input id="character-name" required aria-required="true" value={form.name} onChange={(event) => update('name', event.target.value)} data-testid="input-character-name" /></div>
           <div className="field"><label htmlFor="character-role">Role</label><input id="character-role" value={form.role} onChange={(event) => update('role', event.target.value)} data-testid="input-character-role" /></div>
           <div className="field full"><label htmlFor="character-personality">Personality</label><textarea id="character-personality" value={form.personality} onChange={(event) => update('personality', event.target.value)} data-testid="input-character-personality" /></div>
           <div className="field"><label htmlFor="character-arc">Arc</label><textarea id="character-arc" value={form.arc} onChange={(event) => update('arc', event.target.value)} data-testid="input-character-arc" /></div>
@@ -1978,7 +2137,7 @@ function CharacterEditor({
         </div>
         <div className="form-actions"><button type="button" className="btn btn-quiet" data-testid="button-cancel-character-editor" onClick={onClose}>Cancel</button><button type="button" className="btn btn-primary" data-testid="button-save-character" onClick={onSave} disabled={pending || uploadingReference || !form.name.trim()}><Save size={14} /> {pending ? 'Saving…' : editing ? 'Save changes' : 'Add character'}</button></div>
       </div>
-    </div>
+    </ModalScrim>
   );
 }
 
