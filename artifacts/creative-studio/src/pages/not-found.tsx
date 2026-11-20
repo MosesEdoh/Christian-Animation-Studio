@@ -1,23 +1,17 @@
-import { Card, CardContent } from '@/components/ui/card';
-import { AlertCircle } from 'lucide-react';
+import { Link } from 'wouter';
+import { Compass } from 'lucide-react';
+import { BrandScreen } from '@/components/PublicPages';
 
 export default function NotFound() {
   return (
-    <div className="min-h-screen w-full flex items-center justify-center bg-gray-50">
-      <Card className="w-full max-w-md mx-4">
-        <CardContent className="pt-6">
-          <div className="flex mb-4 gap-2">
-            <AlertCircle className="h-8 w-8 text-red-500" />
-            <h1 className="text-2xl font-bold text-gray-900">
-              404 Page Not Found
-            </h1>
-          </div>
-
-          <p className="mt-4 text-sm text-gray-600">
-            Did you forget to add the page to the router?
-          </p>
-        </CardContent>
-      </Card>
-    </div>
+    <BrandScreen step="Page not found" testId="page-not-found">
+      <span className="brand-screen-icon" aria-hidden="true"><Compass size={20} /></span>
+      <h1 className="brand-screen-title">This scene isn’t in the script</h1>
+      <p className="brand-screen-copy">The page you were looking for doesn’t exist or may have moved.</p>
+      <div className="brand-screen-actions">
+        <Link className="btn btn-primary" href="/">Go to home</Link>
+        <Link className="btn btn-quiet" href="/studio">Open the studio</Link>
+      </div>
+    </BrandScreen>
   );
 }

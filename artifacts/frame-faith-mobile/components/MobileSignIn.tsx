@@ -6,6 +6,7 @@ import * as WebBrowser from 'expo-web-browser';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useColors } from '@/hooks/useColors';
 import { KeyboardAwareScrollViewCompat } from '@/components/KeyboardAwareScrollViewCompat';
+import { BrandMark, Button, Notice, fonts } from '@/components/ui';
 
 WebBrowser.maybeCompleteAuthSession();
 
@@ -35,8 +36,9 @@ export function MobileSignIn() {
   const [verification, setVerification] = useState(false);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const pending = busy || signInStatus === 'fetching' || signUpStatus === 'fetching';
-  const inputStyle = { padding: 16, borderWidth: 1, borderColor: colors.border, borderRadius: 12, color: colors.foreground, backgroundColor: colors.card };
+  const inputStyle = { paddingHorizontal: 14, paddingVertical: 14, borderWidth: 1, borderColor: colors.border, borderRadius: 12, color: colors.foreground, backgroundColor: colors.background, fontFamily: fonts.regular, fontSize: 16 };
   async function submit() {
     setError(''); setBusy(true);
     try {
@@ -81,25 +83,72 @@ export function MobileSignIn() {
     finally { setBusy(false); }
   }
   const errors = register ? signUpErrors : signInErrors;
+  const fieldErrors = Object.values(errors.fields).map(field => field?.message).filter((message): message is string => !!message);
+  const canSubmit = verification ? code.trim().length > 0 : emailAddress.trim().length > 0 && password.length > 0;
+  function switchMode(nextRegister: boolean) {
+    if (nextRegister === register && !verification) return;
+    setRegister(nextRegister); setVerification(false); setCode(''); setError(''); void signIn.reset(); void signUp.reset();
+  }
+  const labelStyle = { fontFamily: fonts.bold, fontSize: 13, color: colors.foreground };
   return <KeyboardAwareScrollViewCompat bottomOffset={24} keyboardShouldPersistTaps="handled"
     style={{ flex: 1, backgroundColor: colors.background }}
-    contentContainerStyle={{ padding: 28, paddingTop: (Platform.OS === 'web' ? Math.max(insets.top, 67) : insets.top) + 35, paddingBottom: Math.max(insets.bottom, 34), gap: 18 }}>
-    <Text style={{ color: colors.teal, fontFamily: 'Manrope_700Bold' }}>FRAME & FAITH</Text>
-    <Text style={{ fontSize: 30, fontFamily: 'Fraunces_600SemiBold', color: colors.foreground }}>{verification ? 'Verify your email' : register ? 'Create an account' : 'Your private studio'}</Text>
-    <Text style={{ color: colors.mutedForeground }}>Use any verified email, then trust each device before opening the shared studio.</Text>
-    <AuthForm onSubmit={() => void submit()}>
-      {verification ? <TextInput testID="mobile-code" accessibilityLabel="Verification code" style={inputStyle} value={code} onChangeText={setCode} keyboardType="number-pad" returnKeyType="done" onSubmitEditing={() => void submit()} placeholder="Verification code" placeholderTextColor={colors.mutedForeground} /> : <>
-        <TextInput testID="mobile-email" accessibilityLabel="Email" style={inputStyle} value={emailAddress} onChangeText={setEmailAddress} autoCapitalize="none" autoComplete="email" keyboardType="email-address" returnKeyType="next" placeholder="Email" placeholderTextColor={colors.mutedForeground} />
-        <TextInput testID="mobile-password" accessibilityLabel="Password" style={inputStyle} value={password} onChangeText={setPassword} secureTextEntry returnKeyType="done" onSubmitEditing={() => void submit()} placeholder="Password" placeholderTextColor={colors.mutedForeground} />
+    contentContainerStyle={{ padding: 24, paddingTop: (Platform.OS === 'web' ? Math.max(insets.top, 67) : insets.top) + 24, paddingBottom: Math.max(insets.bottom, 34), gap: 18, maxWidth: 480, width: '100%', alignSelf: 'center' }}>
+    <BrandMark />
+    <View style={{ gap: 8, marginTop: 8 }}>
+      <Text style={{ fontFamily: fonts.bold, fontSize: 11, letterSpacing: 1.4, color: colors.coral }}>{verification ? 'ONE LAST STEP' : register ? 'JOIN THE STUDIO' : 'WELCOME BACK'}</Text>
+      <Text accessibilityRole="header" style={{ fontSize: 30, lineHeight: 36, fontFamily: fonts.serif, color: colors.foreground }}>{verification ? 'Verify your email' : register ? 'Create an account' : 'Your private studio'}</Text>
+      <Text style={{ fontFamily: fonts.regular, fontSize: 15, lineHeight: 22, color: colors.mutedForeground }}>
+        {verification ? `We sent a code to ${emailAddress || 'your email'}. Enter it below to continue.` : 'Use any verified email, then trust each device before opening the shared studio.'}
+      </Text>
+    </View>
+    {!verification ? (
+      <View accessibilityRole="tablist" style={{ flexDirection: 'row', padding: 4, borderRadius: 14, backgroundColor: colors.muted }}>
+        {[{ value: false, label: 'Sign in' }, { value: true, label: 'Create account' }].map(option => {
+          const active = register === option.value;
+          return <Pressable key={option.label} accessibilityRole="tab" accessibilityState={{ selected: active }} disabled={pending} onPress={() => switchMode(option.value)}
+            style={{ flex: 1, paddingVertical: 10, borderRadius: 10, backgroundColor: active ? colors.card : 'transparent' }}>
+            <Text style={{ textAlign: 'center', fontFamily: fonts.bold, fontSize: 14, color: active ? colors.foreground : colors.mutedForeground }}>{option.label}</Text>
+          </Pressable>;
+        })}
+      </View>
+    ) : null}
+    <View style={{ padding: 18, gap: 16, borderRadius: 20, borderWidth: 1, borderColor: colors.border, backgroundColor: colors.card }}>
+      <AuthForm onSubmit={() => void submit()}>
+        {verification ? <View style={{ gap: 6 }}>
+          <Text style={labelStyle}>Verification code</Text>
+          <TextInput testID="mobile-code" accessibilityLabel="Verification code" style={[inputStyle, { letterSpacing: 4, fontSize: 18 }]} value={code} onChangeText={setCode} keyboardType="number-pad" autoComplete="one-time-code" textContentType="oneTimeCode" returnKeyType="done" onSubmitEditing={() => void submit()} placeholder="123456" placeholderTextColor={colors.mutedForeground} />
+        </View> : <>
+          <View style={{ gap: 6 }}>
+            <Text style={labelStyle}>Email</Text>
+            <TextInput testID="mobile-email" accessibilityLabel="Email" style={inputStyle} value={emailAddress} onChangeText={setEmailAddress} autoCapitalize="none" autoCorrect={false} autoComplete="email" textContentType="emailAddress" keyboardType="email-address" returnKeyType="next" placeholder="you@example.com" placeholderTextColor={colors.mutedForeground} />
+          </View>
+          <View style={{ gap: 6 }}>
+            <Text style={labelStyle}>Password</Text>
+            <View style={{ justifyContent: 'center' }}>
+              <TextInput testID="mobile-password" accessibilityLabel="Password" style={[inputStyle, { paddingRight: 64 }]} value={password} onChangeText={setPassword} secureTextEntry={!showPassword} autoComplete={register ? 'new-password' : 'current-password'} textContentType={register ? 'newPassword' : 'password'} returnKeyType="done" onSubmitEditing={() => void submit()} placeholder={register ? 'Create a strong password' : 'Your password'} placeholderTextColor={colors.mutedForeground} />
+              <Pressable accessibilityRole="button" accessibilityLabel={showPassword ? 'Hide password' : 'Show password'} hitSlop={8} onPress={() => setShowPassword(value => !value)} style={{ position: 'absolute', right: 14 }}>
+                <Text style={{ fontFamily: fonts.bold, fontSize: 13, color: colors.teal }}>{showPassword ? 'Hide' : 'Show'}</Text>
+              </Pressable>
+            </View>
+          </View>
+        </>}
+        {!!error && <Notice tone="error">{error}</Notice>}
+        {fieldErrors.map((message, index) => <Notice key={index} tone="error">{message}</Notice>)}
+        <Button testID="mobile-login" disabled={!canSubmit} loading={pending} onPress={() => void submit()} label={pending ? 'Please wait…' : verification ? 'Verify' : register ? 'Create account' : 'Sign in'} />
+      </AuthForm>
+      {!verification && <>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <View style={{ flex: 1, height: 1, backgroundColor: colors.border }} />
+          <Text style={{ fontFamily: fonts.medium, fontSize: 12, color: colors.mutedForeground }}>or</Text>
+          <View style={{ flex: 1, height: 1, backgroundColor: colors.border }} />
+        </View>
+        <Button testID="mobile-google" variant="secondary" disabled={pending} onPress={() => void google()} label="Continue with Google" />
       </>}
-      {!!error && <Text accessibilityRole="alert" style={{ color: colors.destructive }}>{error}</Text>}
-      {Object.values(errors.fields).map((field, index) => field?.message ? <Text key={index} style={{ color: colors.destructive }}>{field.message}</Text> : null)}
-      <Pressable testID="mobile-login" disabled={pending} onPress={submit} style={{ backgroundColor: colors.primary, borderRadius: 14, padding: 17 }}>
-        <Text style={{ textAlign: 'center', color: colors.primaryForeground }}>{pending ? 'Please wait…' : verification ? 'Verify' : register ? 'Create account' : 'Sign in'}</Text>
-      </Pressable>
-    </AuthForm>
-    {!verification && <Pressable testID="mobile-google" disabled={pending} onPress={google} style={{ backgroundColor: colors.secondary, padding: 17, borderRadius: 14 }}><Text style={{ color: colors.foreground, textAlign: 'center' }}>Continue with Google</Text></Pressable>}
-    <Pressable disabled={pending} onPress={() => { setRegister(!register); setVerification(false); setCode(''); setError(''); void signIn.reset(); void signUp.reset(); }}><Text style={{ color: colors.teal }}>{verification ? 'Start over' : register ? 'Already have an account? Sign in' : 'Create an account'}</Text></Pressable>
+    </View>
+    {verification ? <Button variant="ghost" disabled={pending} onPress={() => switchMode(register)} label="Start over" /> : null}
+    <Text style={{ textAlign: 'center', fontFamily: fonts.medium, fontSize: 12, lineHeight: 18, color: colors.mutedForeground }}>
+      Verified email plus a trusted device keeps studio work private.
+    </Text>
     <View nativeID="clerk-captcha" />
   </KeyboardAwareScrollViewCompat>;
 }

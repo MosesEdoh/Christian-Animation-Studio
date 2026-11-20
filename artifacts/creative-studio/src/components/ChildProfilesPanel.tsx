@@ -1,4 +1,5 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import { useDialogBehavior } from './Dialog';
 import { useQueryClient } from '@tanstack/react-query';
 import {
   getListStudioChildProfilesQueryKey,
@@ -28,6 +29,8 @@ function errorMessage(error: unknown): string {
 }
 
 export function ChildProfilesPanel({ onClose }: { onClose: () => void }) {
+  const dialogRef = useRef<HTMLElement>(null);
+  useDialogBehavior(dialogRef, onClose, { initialFocus: 'dialog' });
   const queryClient = useQueryClient();
   const profiles = useListStudioChildProfiles();
   const createProfile = useCreateStudioChildProfile();
@@ -120,7 +123,7 @@ export function ChildProfilesPanel({ onClose }: { onClose: () => void }) {
     <div className="modal-scrim" role="presentation" onMouseDown={(event) => {
       if (event.target === event.currentTarget) onClose();
     }}>
-      <section className="modal guardian-profile-modal" role="dialog" aria-modal="true" aria-labelledby="guardian-controls-title" data-testid="panel-guardian-controls">
+      <section ref={dialogRef} tabIndex={-1} className="modal guardian-profile-modal" role="dialog" aria-modal="true" aria-labelledby="guardian-controls-title" data-testid="panel-guardian-controls">
         <div className="modal-header">
           <div><p className="eyebrow"><ShieldCheck size={14} /> Guardian controls</p><h2 id="guardian-controls-title">Child profiles</h2></div>
           <button type="button" className="icon-button" aria-label="Close guardian controls" data-testid="button-close-guardian-controls" onClick={onClose}><X size={15} /></button>

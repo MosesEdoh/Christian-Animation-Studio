@@ -1,44 +1,16 @@
-import { Link, Stack } from 'expo-router';
-import { StyleSheet, Text, View } from 'react-native';
-import { useColors } from '@/hooks/useColors';
+import { router, Stack } from 'expo-router';
+import { Button, StateScreen } from '@/components/ui';
 
 export default function NotFoundScreen() {
-  const colors = useColors();
-
   return (
     <>
-      <Stack.Screen options={{ title: 'Oops!' }} />
-      <View style={[styles.container, { backgroundColor: colors.background }]}>
-        <Text style={[styles.title, { color: colors.foreground }]}>
-          This screen doesn&apos;t exist.
-        </Text>
-
-        <Link href="/" style={styles.link}>
-          <Text style={[styles.linkText, { color: colors.primary }]}>
-            Go to home screen!
-          </Text>
-        </Link>
-      </View>
+      <Stack.Screen options={{ title: 'Not found', headerShown: false }} />
+      <StateScreen
+        title="This scene isn’t in the script"
+        message="The screen you were looking for doesn’t exist or has moved."
+      >
+        <Button label="Back to home" onPress={() => router.replace('/')} />
+      </StateScreen>
     </>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: 20,
-  },
-  title: {
-    fontSize: 20,
-    fontWeight: 'bold',
-  },
-  link: {
-    marginTop: 15,
-    paddingVertical: 15,
-  },
-  linkText: {
-    fontSize: 14,
-  },
-});
