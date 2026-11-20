@@ -57,7 +57,11 @@ export default defineConfig({
         'attached_assets',
       ),
     },
-    dedupe: ['react', 'react-dom'],
+    // @workspace/api-client-react resolves its own @tanstack/react-query copy
+    // (pnpm peer variant for a different React version). Without deduping,
+    // the studio's QueryClientProvider and the generated hooks use different
+    // contexts and every signed-in page fails with "No QueryClient set".
+    dedupe: ['react', 'react-dom', '@tanstack/react-query'],
   },
   root: path.resolve(import.meta.dirname),
   build: {
